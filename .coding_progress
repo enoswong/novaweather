@@ -1,0 +1,36 @@
+v0.9.0
+Global Weather Backend — Phase D Differentiation (complete)
+
+- contract: 100%
+- schema: 100%
+- edge-functions: 100%
+- cron-coverage: 100% (17 jobs)
+- risk-alerts: 100%
+- security-rls: 100%
+- api-test-page: 100%
+- environment-timeline-api: 100%
+- api-tester-connectivity-fix: 100%
+- cors-proxy: 100%
+- country-region-api: 100%
+- region-code-sync-refactor: 100%
+- region-coverage-health-api: 100%
+- region-code-sync-scheduler: 100%
+- geo-reverse-nominatim: 100%
+- alerts-geo-filtering: 100%
+- air-quality-api: 100%
+- metar-observations: 100%
+- nws-geojson-alerts: 100%
+- wx-status-health-page: 100%
+- marine-api: 100%
+- solar-radiation-api: 100%
+- historical-archive-api: 100%
+- astronomy-ephemeris-api: 100%
+- bundle-endpoint: 100%
+- provider-timeout-fix: 100%
+- indices-api: 100%
+- compare-api: 100%
+- anomaly-detection-api: 100%
+- webhook-push-api: 100%
+- api-test-page-v2: 100%
+
+overall: 100%

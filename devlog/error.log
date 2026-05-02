@@ -1,0 +1,31 @@
+2026-04-30T00:00:00.000Z
+- （初始化）尚未記錄錯誤。
+
+2026-05-01T03:47:56.466+08:00
+- 問題：執行 `vercel deploy --yes` 時 CLI 進入 device login flow，因尚未完成授權而中止部署。
+- 解法：先於終端完成 Vercel 登入（`vercel login` 或依提示開啟裝置授權連結），再重新執行部署。
+
+2026-05-01T03:59:00.000+08:00
+- 問題：嘗試以 `deno check` 驗證 Edge Function 時，系統顯示 `deno` command not found。
+- 解法：本機需先安裝 Deno（或在已安裝 Deno 的 CI/環境中做型別檢查），目前先以靜態審查與 lints 驗證。
+
+2026-05-01T04:28:00.000+08:00
+- 問題：API 實測頁所有 GET 端點顯示 `TypeError: Failed to fetch`。
+- 解法：移除 GET 的 `content-type: application/json`，避免觸發 CORS preflight；保留 POST 才附帶 JSON content-type。
+
+2026-05-01T04:33:00.000+08:00
+- 問題：即使移除 GET content-type，Vercel 靜態頁跨網域呼叫 Supabase Functions 仍受 CORS 影響。
+- 解法：新增 `wx-api-proxy`，在 Supabase 端統一處理 `OPTIONS` 與 `access-control-*`，前端改走 proxy 轉發。
+
+2026-05-01T04:58:00.000+08:00
+- 問題：舊查詢主流程偏向 lat/lon 與 place_id，不符合 country/region 對外契約。
+- 解法：新增 `wx-country-today`、`wx-region`，並建立 `wx_region_codes` + `wx_region_cache` 作映射與快取。
+
+2026-05-01T05:10:00.000+08:00
+- 問題：`wx-country-today` 初版依賴外部 reverse geocoding 進行區域回填，對外部可用性敏感。
+- 解法：重構為 shared region sync（`_shared/wx/region_codes.ts`）+ `wx-sync-region-codes` 排程，並以 seed 區域保底。
+
+2026-05-01T05:14:00.000+08:00
+- 問題：缺少 region_code 覆蓋率可觀測性，且同步函式尚未正式納入雲端排程。
+- 解法：新增 `wx-region-coverage` 健康檢查 API，並新增 `novaweather_sync_region_codes` pg_cron job（每 30 分鐘）。
+

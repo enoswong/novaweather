@@ -1,0 +1,700 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NovaWeather API 實測頁 v0.9</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b1020;
+        --panel: #131a2f;
+        --panel-2: #1b2440;
+        --text: #e9eeff;
+        --muted: #a5b1d8;
+        --ok: #25c48f;
+        --warn: #f7b84b;
+        --bad: #ff6f83;
+        --line: #2b375d;
+        --group: #0e1628;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: Inter, "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+        background: linear-gradient(180deg, #0b1020 0%, #090d1a 100%);
+        color: var(--text);
+      }
+      main { max-width: 1400px; margin: 0 auto; padding: 24px; }
+      h1 { margin: 0 0 12px; font-size: 1.8rem; }
+      h2 { margin: 0; font-size: 1rem; color: var(--muted); font-weight: 500; }
+      p { margin: 8px 0; color: var(--muted); }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 16px;
+        margin: 16px 0;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 10px;
+      }
+      label { display: block; font-size: 0.82rem; color: var(--muted); margin-bottom: 4px; }
+      input, select, textarea, button {
+        width: 100%; border-radius: 8px; border: 1px solid var(--line);
+        background: var(--panel-2); color: var(--text); padding: 9px; font: inherit;
+      }
+      textarea { min-height: 70px; }
+      .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+      button { width: auto; cursor: pointer; }
+      button.primary { background: #2b58ff; border-color: #3a66ff; }
+      table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 0.87rem; }
+      th, td { border-bottom: 1px solid var(--line); padding: 8px 7px; text-align: left; vertical-align: top; }
+      th { color: var(--muted); font-weight: 600; }
+      tr.group-header td {
+        background: var(--group); color: var(--muted); font-size: 0.78rem;
+        font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+        padding: 5px 8px; border-top: 1px solid var(--line);
+      }
+      .ok { color: var(--ok); }
+      .warn { color: var(--warn); }
+      .bad { color: var(--bad); }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.83em; }
+      details { margin-top: 8px; }
+      summary { cursor: pointer; color: var(--muted); }
+      pre {
+        background: #090f23; border: 1px solid var(--line); border-radius: 8px;
+        padding: 10px; overflow: auto; max-height: 340px; font-size: 0.8rem;
+      }
+      .badge {
+        display: inline-block; padding: 2px 8px; border: 1px solid var(--line);
+        border-radius: 999px; font-size: 0.8rem; color: var(--muted);
+      }
+      .section-label {
+        font-size: 0.78rem; font-weight: 700; text-transform: uppercase;
+        letter-spacing: 0.05em; color: var(--muted); margin: 14px 0 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>NovaWeather 詳細 API 實測頁 <span class="badge">v0.9</span></h1>
+      <p>依 API 特性自動刷新。優先採用 <span class="mono">cache-control</span> / <span class="mono">refresh_after_seconds</span> / <span class="mono">next_refresh_at</span>，無則回退到預設頻率。所有請求透過 <span class="mono">wx-api-proxy</span> 轉發。</p>
+
+      <section class="panel">
+        <div class="section-label">基本設定</div>
+        <div class="grid">
+          <div style="grid-column: span 2">
+            <label for="baseUrl">Base URL（Supabase Functions）</label>
+            <input id="baseUrl" value="https://whajwzbqracxpydpooyp.supabase.co/functions/v1" />
+          </div>
+          <div>
+            <label for="lat">lat（預設：香港）</label>
+            <input id="lat" value="22.31" />
+          </div>
+          <div>
+            <label for="lon">lon</label>
+            <input id="lon" value="114.16" />
+          </div>
+          <div>
+            <label for="provider">provider</label>
+            <select id="provider">
+              <option value="auto">auto</option>
+              <option value="open_meteo">open_meteo</option>
+              <option value="weatherapi">weatherapi</option>
+              <option value="tomorrow_io">tomorrow_io</option>
+              <option value="openweather">openweather</option>
+            </select>
+          </div>
+          <div>
+            <label for="allowLiveFetch">allow_live_fetch</label>
+            <select id="allowLiveFetch">
+              <option value="true">true</option>
+              <option value="false">false</option>
+            </select>
+          </div>
+          <div>
+            <label for="radiusKm">radius_km（alerts / risk）</label>
+            <input id="radiusKm" value="50" />
+          </div>
+          <div>
+            <label for="countryCode">country_code（Region API）</label>
+            <input id="countryCode" value="HK" />
+          </div>
+          <div>
+            <label for="regionCode">region_code（Region API）</label>
+            <input id="regionCode" value="" placeholder="e.g. tin-shui-wai-weci" />
+          </div>
+        </div>
+
+        <div class="section-label" style="margin-top:14px">進階參數</div>
+        <div class="grid">
+          <div>
+            <label for="geoQuery">geo_forward q=</label>
+            <input id="geoQuery" value="香港/天水圍" />
+          </div>
+          <div>
+            <label for="locationsInput">wx-compare locations（pipe 分隔）</label>
+            <input id="locationsInput" value="22.31,114.16,Hong Kong|35.68,139.69,Tokyo|48.86,2.35,Paris" />
+          </div>
+          <div>
+            <label for="bundleInclude">wx-bundle include（comma 分隔）</label>
+            <input id="bundleInclude" value="forecast_hourly,forecast_daily,observed,aq,alerts,risk" />
+          </div>
+          <div>
+            <label for="ownerKey">webhook owner_key</label>
+            <input id="ownerKey" value="test-owner-1" />
+          </div>
+          <div>
+            <label for="webhookCallbackUrl">webhook callback_url（POST 測試用）</label>
+            <input id="webhookCallbackUrl" value="https://httpbin.org/post" />
+          </div>
+          <div>
+            <label for="hours">hours（Region）</label>
+            <input id="hours" value="72" />
+          </div>
+          <div>
+            <label for="days">days（Region / Historical）</label>
+            <input id="days" value="7" />
+          </div>
+          <div>
+            <label for="windowHours">window_hours</label>
+            <input id="windowHours" value="24" />
+          </div>
+          <div>
+            <label for="minuteWindow">minute_window</label>
+            <input id="minuteWindow" value="60" />
+          </div>
+          <div>
+            <label for="page">page</label>
+            <input id="page" value="1" />
+          </div>
+          <div>
+            <label for="pageSize">page_size</label>
+            <input id="pageSize" value="100" />
+          </div>
+          <div>
+            <label for="adminToken">Admin Token（POST 維運 API）</label>
+            <input id="adminToken" type="password" placeholder="Bearer token value" />
+          </div>
+        </div>
+
+        <div class="row" style="margin-top: 14px">
+          <button class="primary" id="runAll">Run All Once</button>
+          <button id="startAuto">Start Auto Refresh</button>
+          <button id="stopAuto">Stop Auto Refresh</button>
+          <button id="openApiDoc">查看 API DOC</button>
+          <span class="badge" id="autoStatus">Auto: Stopped</span>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="row"><strong>端點檢測清單</strong></div>
+        <table>
+          <thead>
+            <tr>
+              <th>✓</th>
+              <th>API</th>
+              <th>M</th>
+              <th>Auto Refresh</th>
+              <th>HTTP</th>
+              <th>Latency</th>
+              <th>Size</th>
+              <th>Updated</th>
+              <th>Next</th>
+              <th>Output</th>
+              <th>Run</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </section>
+    </main>
+
+    <script>
+      // ── Endpoint definitions ──────────────────────────────────────────────
+      const GROUPS = [
+        {
+          label: "Geo",
+          entries: [
+            { id: "geo_forward",  label: "GET /wx-geo-forward",  method: "GET", ms: 60*60*1000, on: false },
+            { id: "geo_reverse",  label: "GET /wx-geo-reverse",  method: "GET", ms: 60*60*1000, on: false },
+          ],
+        },
+        {
+          label: "Forecast / Observed",
+          entries: [
+            { id: "forecast_hourly",      label: "GET /wx-forecast-hourly",      method: "GET", ms: 60*60*1000,   on: true  },
+            { id: "forecast_daily",       label: "GET /wx-forecast-daily",       method: "GET", ms: 6*60*60*1000, on: true  },
+            { id: "observed_now",         label: "GET /wx-observed-now",         method: "GET", ms: 15*60*1000,   on: true  },
+            { id: "environment_timeline", label: "GET /wx-environment-timeline", method: "GET", ms: 60*60*1000,   on: false },
+          ],
+        },
+        {
+          label: "Alerts & Risk",
+          entries: [
+            { id: "alerts", label: "GET /wx-alerts", method: "GET", ms: 5*60*1000,  on: true  },
+            { id: "risk",   label: "GET /wx-risk",   method: "GET", ms: 10*60*1000, on: true  },
+          ],
+        },
+        {
+          label: "Specialized Data",
+          entries: [
+            { id: "air_quality",    label: "GET /wx-air-quality",    method: "GET", ms: 60*60*1000,    on: false },
+            { id: "marine",         label: "GET /wx-marine",         method: "GET", ms: 60*60*1000,    on: false },
+            { id: "solar",          label: "GET /wx-solar",          method: "GET", ms: 60*60*1000,    on: false },
+            { id: "historical",     label: "GET /wx-historical",     method: "GET", ms: 24*60*60*1000, on: false },
+            { id: "astronomy",      label: "GET /wx-astronomy",      method: "GET", ms: 6*60*60*1000,  on: false },
+            { id: "observed_metar", label: "GET /wx-observed-metar", method: "GET", ms: 30*60*1000,    on: false },
+          ],
+        },
+        {
+          label: "Analysis",
+          entries: [
+            { id: "indices", label: "GET /wx-indices", method: "GET", ms: 15*60*1000,  on: true  },
+            { id: "compare", label: "GET /wx-compare", method: "GET", ms: 10*60*1000,  on: false },
+            { id: "anomaly", label: "GET /wx-anomaly", method: "GET", ms: 60*60*1000,  on: false },
+            { id: "bundle",  label: "GET /wx-bundle",  method: "GET", ms: 60*60*1000,  on: false },
+          ],
+        },
+        {
+          label: "Webhook",
+          entries: [
+            { id: "webhook_list",     label: "GET /wx-webhook-register (list)",     method: "GET",  ms: 60*60*1000, on: false },
+            { id: "webhook_register", label: "POST /wx-webhook-register (register)", method: "POST", ms: 0,          on: false },
+            { id: "webhook_dispatch", label: "GET /wx-webhook-dispatch (manual)",   method: "GET",  ms: 5*60*1000,  on: false },
+          ],
+        },
+        {
+          label: "Status",
+          entries: [
+            { id: "status", label: "GET /wx-status", method: "GET", ms: 60*1000, on: true },
+          ],
+        },
+        {
+          label: "Country / Region",
+          entries: [
+            { id: "country_today",    label: "GET /wx-country-today",       method: "GET", ms: 10*60*1000, on: false },
+            { id: "region_all",       label: "GET /wx-region (all)",        method: "GET", ms: 2*60*1000,  on: false },
+            { id: "region_minute",    label: "GET /wx-region (minute)",     method: "GET", ms: 2*60*1000,  on: false },
+            { id: "region_hourly",    label: "GET /wx-region (hourly)",     method: "GET", ms: 5*60*1000,  on: false },
+            { id: "region_daily",     label: "GET /wx-region (daily)",      method: "GET", ms: 30*60*1000, on: false },
+            { id: "region_coverage",  label: "GET /wx-region-coverage",     method: "GET", ms: 10*60*1000, on: false },
+          ],
+        },
+        {
+          label: "Maintenance (POST)",
+          entries: [
+            { id: "sync_region_codes",      label: "POST /wx-sync-region-codes",             method: "POST", ms: 6*60*60*1000, on: false },
+            { id: "provider_health",        label: "POST /wx-provider-health-refresh",        method: "POST", ms: 60*60*1000,   on: false },
+            { id: "cleanup_cache",          label: "POST /wx-cleanup-expired-cache",          method: "POST", ms: 60*60*1000,   on: false },
+            { id: "prune_series",           label: "POST /wx-prune-time-series",              method: "POST", ms: 24*60*60*1000,on: false },
+            { id: "alerts_ingest_nws",      label: "POST /wx-alerts-ingest-nws",             method: "POST", ms: 10*60*1000,   on: false },
+            { id: "refresh_airquality",     label: "POST /wx-refresh-airquality-hotspots",   method: "POST", ms: 3*60*60*1000, on: false },
+            { id: "refresh_marine",         label: "POST /wx-refresh-marine-hotspots",       method: "POST", ms: 6*60*60*1000, on: false },
+          ],
+        },
+      ];
+
+      // Flatten for iteration, preserving group info
+      const endpoints = [];
+      for (const g of GROUPS) {
+        for (const e of g.entries) {
+          endpoints.push({ ...e, enabled: e.on, defaultMs: e.ms, group: g.label });
+        }
+      }
+
+      // ── State ────────────────────────────────────────────────────────────
+      const state   = new Map();
+      const timers  = new Map();
+      let autoMode  = false;
+
+      const el = (id) => document.getElementById(id);
+      const rowsEl = el("rows");
+
+      // ── Helpers ───────────────────────────────────────────────────────────
+      function parseNum(v, fallback) { const n = Number(v); return Number.isFinite(n) ? n : fallback; }
+
+      function parseCacheControlMs(cc) {
+        if (!cc) return null;
+        const m = cc.match(/(?:s-maxage|max-age)=(\d+)/i);
+        if (!m) return null;
+        const sec = Number(m[1]);
+        return Number.isFinite(sec) && sec > 0 ? sec * 1000 : null;
+      }
+
+      function readRefreshFromPayload(p) {
+        if (!p || typeof p !== "object") return null;
+        if (Number.isFinite(p.refresh_after_seconds) && p.refresh_after_seconds > 0) return p.refresh_after_seconds * 1000;
+        const meta = p.meta;
+        if (meta && Number.isFinite(meta.refresh_after_seconds) && meta.refresh_after_seconds > 0) return meta.refresh_after_seconds * 1000;
+        const next = p.next_refresh_at || (meta ? meta.next_refresh_at : null);
+        if (next) { const diff = new Date(next).getTime() - Date.now(); if (diff > 0) return diff; }
+        return null;
+      }
+
+      function formatMs(ms) {
+        if (!Number.isFinite(ms) || ms <= 0) return "-";
+        const sec = Math.round(ms / 1000);
+        if (sec < 60) return `${sec}s`;
+        const min = Math.floor(sec / 60), rem = sec % 60;
+        return rem ? `${min}m ${rem}s` : `${min}m`;
+      }
+
+      function escapeHtml(s) {
+        return String(s).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");
+      }
+
+      function payloadPreview(p) {
+        const t = JSON.stringify(p ?? {}, null, 2);
+        return t.length <= 2400 ? t : t.slice(0, 2400) + "\n… (truncated)";
+      }
+
+      function latLon() {
+        return { lat: el("lat").value.trim() || "22.31", lon: el("lon").value.trim() || "114.16" };
+      }
+
+      // ── Build request ─────────────────────────────────────────────────────
+      function buildRequest(id) {
+        const baseUrl = el("baseUrl").value.trim().replace(/\/$/, "");
+        let fn = "", query = new URLSearchParams(), method = "GET", body = null;
+
+        const ll = latLon();
+        const prov = el("provider").value;
+        const live = el("allowLiveFetch").value;
+        const rkm  = el("radiusKm").value;
+
+        switch (id) {
+          // ── Geo ──
+          case "geo_forward":
+            fn = "wx-geo-forward";
+            query.set("q", el("geoQuery").value.trim() || "Hong Kong");
+            break;
+          case "geo_reverse":
+            fn = "wx-geo-reverse";
+            query.set("lat", ll.lat); query.set("lon", ll.lon);
+            break;
+
+          // ── Forecast / Observed ──
+          case "forecast_hourly":
+            fn = "wx-forecast-hourly";
+            query.set("lat", ll.lat); query.set("lon", ll.lon);
+            query.set("forecast_days", "2");
+            query.set("provider", prov); query.set("allow_live_fetch", live);
+            break;
+          case "forecast_daily":
+            fn = "wx-forecast-daily";
+            query.set("lat", ll.lat); query.set("lon", ll.lon);
+            query.set("forecast_days", "7");
+            query.set("provider", prov); query.set("allow_live_fetch", live);
+            break;
+          case "observed_now":
+            fn = "wx-observed-now";
+            query.set("lat", ll.lat); query.set("lon", ll.lon);
+            query.set("provider", prov); query.set("allow_live_fetch", live);
+            break;
+          case "environment_timeline":
+            fn = "wx-environment-timeline";
+            query.set("lat", ll.lat); query.set("lon", ll.lon);
+            query.set("allow_live_fetch", live);
+            break;
+
+          // ── Alerts & Risk ──
+          case "alerts":
+            fn = "wx-alerts";
+            query.set("lat", ll.lat); query.set("lon", ll.lon);
+            query.set("radius_km", rkm);
+            break;
+          case "risk":
+            fn = "wx-risk";
+            query.set("lat", ll.lat); query.set("lon", ll.lon);
+            query.set("radius_km", rkm); query.set("allow_live_fetch", live);
+            break;
+
+          // ── Specialized ──
+          case "air_quality":
+            fn = "wx-air-quality";
+            query.set("lat", ll.lat); query.set("lon", ll.lon);
+            break;
+          case "marine":
+            fn = "wx-marine";
+            query.set("lat", ll.lat); query.set("lon", ll.lon);
+            break;
+          case "solar":
+            fn = "wx-solar";
+            query.set("lat", ll.lat); query.set("lon", ll.lon);
+            break;
+          case "historical": {
+            fn = "wx-historical";
+            query.set("lat", ll.lat); query.set("lon", ll.lon);
+            const end = new Date().toISOString().slice(0, 10);
+            const start = new Date(Date.now() - parseNum(el("days").value, 7) * 86400000).toISOString().slice(0, 10);
+            query.set("start_date", start); query.set("end_date", end);
+            break;
+          }
+          case "astronomy":
+            fn = "wx-astronomy";
+            query.set("lat", ll.lat); query.set("lon", ll.lon);
+            query.set("days", String(parseNum(el("days").value, 3)));
+            break;
+          case "observed_metar":
+            fn = "wx-observed-metar";
+            query.set("allow_live_fetch", live);
+            break;
+
+          // ── Analysis ──
+          case "indices":
+            fn = "wx-indices";
+            query.set("lat", ll.lat); query.set("lon", ll.lon);
+            break;
+          case "compare":
+            fn = "wx-compare";
+            query.set("locations", el("locationsInput").value.trim() ||
+              "22.31,114.16,Hong Kong|35.68,139.69,Tokyo");
+            break;
+          case "anomaly":
+            fn = "wx-anomaly";
+            query.set("lat", ll.lat); query.set("lon", ll.lon);
+            break;
+          case "bundle":
+            fn = "wx-bundle";
+            query.set("lat", ll.lat); query.set("lon", ll.lon);
+            query.set("include", el("bundleInclude").value.trim() ||
+              "forecast_hourly,forecast_daily,observed,aq,alerts,risk");
+            break;
+
+          // ── Webhook ──
+          case "webhook_list":
+            fn = "wx-webhook-register";
+            query.set("owner_key", el("ownerKey").value.trim() || "test-owner-1");
+            break;
+          case "webhook_register":
+            fn = "wx-webhook-register";
+            method = "POST";
+            body = {
+              owner_key:    el("ownerKey").value.trim() || "test-owner-1",
+              callback_url: el("webhookCallbackUrl").value.trim() || "https://httpbin.org/post",
+              event_types:  ["alert_new"],
+              lat:          parseFloat(ll.lat),
+              lon:          parseFloat(ll.lon),
+              radius_km:    parseNum(rkm, 50),
+            };
+            break;
+          case "webhook_dispatch":
+            fn = "wx-webhook-dispatch";
+            query.set("since_minutes", "6");
+            break;
+
+          // ── Status ──
+          case "status":
+            fn = "wx-status";
+            break;
+
+          // ── Country / Region ──
+          case "country_today":
+            fn = "wx-country-today";
+            query.set("country_code", el("countryCode").value.trim().toUpperCase());
+            query.set("page", String(parseNum(el("page").value, 1)));
+            query.set("page_size", String(parseNum(el("pageSize").value, 100)));
+            query.set("include", "summary,risk,alerts");
+            query.set("radius_km", rkm);
+            break;
+          case "region_all":
+            fn = "wx-region";
+            query.set("country_code", el("countryCode").value.trim().toUpperCase());
+            query.set("region_code",  el("regionCode").value.trim());
+            query.set("provider", prov); query.set("allow_live_fetch", live);
+            query.set("granularity", "all");
+            query.set("window_hours", el("windowHours").value);
+            query.set("minute_window", el("minuteWindow").value);
+            query.set("hours", el("hours").value);
+            query.set("days", el("days").value);
+            query.set("radius_km", rkm);
+            break;
+          case "region_minute":
+            fn = "wx-region";
+            query.set("country_code", el("countryCode").value.trim().toUpperCase());
+            query.set("region_code",  el("regionCode").value.trim());
+            query.set("granularity", "minute");
+            query.set("minute_window", el("minuteWindow").value);
+            query.set("window_hours", el("windowHours").value);
+            query.set("radius_km", rkm);
+            break;
+          case "region_hourly":
+            fn = "wx-region";
+            query.set("country_code", el("countryCode").value.trim().toUpperCase());
+            query.set("region_code",  el("regionCode").value.trim());
+            query.set("granularity", "hourly");
+            query.set("hours", el("hours").value);
+            query.set("window_hours", el("windowHours").value);
+            query.set("radius_km", rkm);
+            break;
+          case "region_daily":
+            fn = "wx-region";
+            query.set("country_code", el("countryCode").value.trim().toUpperCase());
+            query.set("region_code",  el("regionCode").value.trim());
+            query.set("granularity", "daily");
+            query.set("days", el("days").value);
+            query.set("window_hours", el("windowHours").value);
+            query.set("radius_km", rkm);
+            break;
+          case "region_coverage":
+            fn = "wx-region-coverage";
+            query.set("country_code", el("countryCode").value.trim().toUpperCase());
+            break;
+
+          // ── Maintenance ──
+          case "sync_region_codes":      fn = "wx-sync-region-codes";            method = "POST"; body = {}; break;
+          case "provider_health":        fn = "wx-provider-health-refresh";      method = "POST"; body = {}; break;
+          case "cleanup_cache":          fn = "wx-cleanup-expired-cache";        method = "POST"; body = {}; break;
+          case "prune_series":           fn = "wx-prune-time-series";            method = "POST"; body = {}; break;
+          case "alerts_ingest_nws":      fn = "wx-alerts-ingest-nws";           method = "POST"; body = {}; break;
+          case "refresh_airquality":     fn = "wx-refresh-airquality-hotspots"; method = "POST"; body = {}; break;
+          case "refresh_marine":         fn = "wx-refresh-marine-hotspots";     method = "POST"; body = {}; break;
+          default: fn = id;
+        }
+
+        // Route through proxy
+        const proxyQ = new URLSearchParams({ fn });
+        for (const [k, v] of query.entries()) proxyQ.set(k, v);
+        const url = `${baseUrl}/wx-api-proxy?${proxyQ.toString()}`;
+        return { url, method, body, fn };
+      }
+
+      // ── Render ────────────────────────────────────────────────────────────
+      function renderRows() {
+        rowsEl.innerHTML = "";
+        let lastGroup = null;
+        for (const ep of endpoints) {
+          if (ep.group !== lastGroup) {
+            const groupRow = document.createElement("tr");
+            groupRow.className = "group-header";
+            groupRow.innerHTML = `<td colspan="11">${ep.group}</td>`;
+            rowsEl.appendChild(groupRow);
+            lastGroup = ep.group;
+          }
+          const s = state.get(ep.id) || {};
+          const sc = s.statusCode;
+          const cls = sc >= 200 && sc < 300 ? "ok" : sc ? "bad" : "warn";
+          const preview = escapeHtml(payloadPreview(s.payload));
+          const nextTxt = s.nextRunAt ? new Date(s.nextRunAt).toLocaleTimeString() : "-";
+          const row = document.createElement("tr");
+          row.innerHTML = `
+            <td><input type="checkbox" data-enabled="${ep.id}" ${ep.enabled ? "checked" : ""} /></td>
+            <td class="mono">${ep.label}</td>
+            <td>${ep.method}</td>
+            <td>${formatMs(s.refreshMs || ep.defaultMs)} <small class="mono">(${s.refreshSource || "default"})</small></td>
+            <td class="${cls}">${sc || "-"}</td>
+            <td>${s.latencyMs ? s.latencyMs + " ms" : "-"}</td>
+            <td>${s.responseBytes ? s.responseBytes + " B" : "-"}</td>
+            <td>${s.updatedAt ? new Date(s.updatedAt).toLocaleTimeString() : "-"}</td>
+            <td>${nextTxt}</td>
+            <td><details><summary>JSON</summary><pre>${preview}</pre></details></td>
+            <td><button data-run="${ep.id}">Run</button></td>
+          `;
+          rowsEl.appendChild(row);
+        }
+      }
+
+      // ── Fetch ─────────────────────────────────────────────────────────────
+      async function runEndpoint(ep) {
+        const t0 = performance.now();
+        const req = buildRequest(ep.id);
+        const headers = {};
+        const token = el("adminToken").value.trim();
+        if (req.method === "POST") {
+          headers["content-type"] = "application/json";
+          if (token) headers.authorization = `Bearer ${token}`;
+        }
+
+        let response, text = "", payload = null;
+        let refreshMs = ep.defaultMs, refreshSource = "default";
+        try {
+          response = await fetch(req.url, {
+            method: req.method,
+            headers,
+            body: req.body ? JSON.stringify(req.body) : undefined,
+          });
+          text = await response.text();
+          try { payload = text ? JSON.parse(text) : {}; } catch { payload = { raw_text: text }; }
+
+          const ccMs = parseCacheControlMs(response.headers.get("cache-control"));
+          if (ccMs) { refreshMs = ccMs; refreshSource = "cache-control"; }
+          const pMs = readRefreshFromPayload(payload);
+          if (pMs) { refreshMs = pMs; refreshSource = "payload"; }
+        } catch (err) {
+          payload = { error: "Network failure", detail: String(err) };
+        }
+
+        const latencyMs = Math.round(performance.now() - t0);
+        const responseBytes = new TextEncoder().encode(text || JSON.stringify(payload || {})).length;
+        state.set(ep.id, {
+          statusCode: response ? response.status : 0,
+          latencyMs, responseBytes,
+          updatedAt: Date.now(),
+          nextRunAt: Date.now() + refreshMs,
+          refreshMs, refreshSource,
+          url: req.url, payload, fn: req.fn,
+        });
+        renderRows();
+
+        // Auto-fill region_code from country_today result
+        if (ep.id === "country_today" && !el("regionCode").value.trim()) {
+          const first = payload?.regions?.[0]?.region_code;
+          if (typeof first === "string" && first.length > 0) el("regionCode").value = first;
+        }
+
+        if (autoMode && ep.enabled && ep.defaultMs > 0) {
+          if (timers.has(ep.id)) clearTimeout(timers.get(ep.id));
+          timers.set(ep.id, setTimeout(() => runEndpoint(ep), refreshMs));
+        }
+      }
+
+      // ── Controls ──────────────────────────────────────────────────────────
+      function syncEnabled() {
+        document.querySelectorAll("input[data-enabled]").forEach((cb) => {
+          const ep = endpoints.find((e) => e.id === cb.dataset.enabled);
+          if (ep) ep.enabled = cb.checked;
+        });
+      }
+
+      async function runAllOnce() {
+        syncEnabled();
+        for (const ep of endpoints.filter(e => e.enabled)) await runEndpoint(ep);
+      }
+
+      function startAuto() {
+        syncEnabled();
+        autoMode = true;
+        el("autoStatus").textContent = "Auto: Running";
+        timers.forEach(clearTimeout); timers.clear();
+        endpoints.filter(e => e.enabled && e.defaultMs > 0).forEach(ep => runEndpoint(ep));
+      }
+
+      function stopAuto() {
+        autoMode = false;
+        el("autoStatus").textContent = "Auto: Stopped";
+        timers.forEach(clearTimeout); timers.clear();
+      }
+
+      // ── Events ────────────────────────────────────────────────────────────
+      rowsEl.addEventListener("click", (e) => {
+        const runId = e.target.getAttribute?.("data-run");
+        if (!runId) return;
+        const ep = endpoints.find(x => x.id === runId);
+        if (ep) runEndpoint(ep);
+      });
+      rowsEl.addEventListener("change", syncEnabled);
+      el("runAll").addEventListener("click", runAllOnce);
+      el("startAuto").addEventListener("click", startAuto);
+      el("stopAuto").addEventListener("click", stopAuto);
+      el("openApiDoc").addEventListener("click", () =>
+        window.open(new URL("./docs/api/novaweather_api_doc.md", window.location.href).href, "_blank", "noopener,noreferrer")
+      );
+
+      renderRows();
+    </script>
+  </body>
+</html>
