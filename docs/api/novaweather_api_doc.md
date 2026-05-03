@@ -1,4 +1,4 @@
-# NovaWeather API 文件 v0.9.0
+# NovaWeather API 文件 v0.9.1
 
 ## 版本狀態
 ✅ 已完成 | ▢ 進行中 | ✖️ 已移除
@@ -8,12 +8,13 @@
 - [✅] Country/Region + Region Sync API [進度 100%] (v0.4.1)
 - [✅] Region Coverage Health API [進度 100%] (v0.4.2)
 - [✅] Geo-Reverse 修正（Nominatim OSM）+ SMG 警報地理 + CAP bbox [進度 100%] (v0.5.0)
-- [✅] Air Quality API + METAR 觀測 + NWS GeoJSON 警報 + wx-status [進度 100%] (v0.5.0)
+- [✅] Air Quality API + METAR 觀測 + NWS GeoJSON 警報 [進度 100%] (v0.5.0)
 - [✅] Marine API + Solar API + Historical Archive API + Astronomy API [進度 100%] (v0.6.0)
 - [✅] Bundle API（單請求並行多資料集）+ 供應商 10s 超時修正 [進度 100%] (v0.7.0)
 - [✅] 複合指數 API + 多地比較 API + 氣候異常偵測 API [進度 100%] (v0.8.0)
 - [✅] Webhook 推送 API（訂閱警報/風險事件，HMAC 簽名，每 5 分鐘派送）[進度 100%] (v0.9.0)
 - [✅] API 實測頁全面更新（35 端點、9 群組、lat/lon + 專用欄位）[進度 100%] (v0.9.0)
+- [✅] **v0.9.1**：UTC 時區標準化（Open-Meteo timezone=UTC）+ wx-status 系統健康 API + 呼叫慣例文件修正
 
 ---
 
@@ -44,6 +45,25 @@ https://<project-ref>.supabase.co/functions/v1
 ```
 
 > 範例中以 `$BASE` 代替完整 Base URL。
+
+### 呼叫慣例
+
+文件中的端點以邏輯名稱標示（例如 `GET /wx-geo-forward`），對應 Supabase Edge Function 名稱。**實際調用有兩種方式**：
+
+| 方式 | 格式 | 適用場景 |
+|---|---|---|
+| **直接呼叫** | `GET $BASE/<function-name>?params` | 後端 / Server-to-Server |
+| **CORS Proxy** | `GET $BASE/wx-api-proxy?fn=<function-name>&params` | 前端跨域（無 CORS 問題） |
+
+```bash
+# 直接呼叫（後端）
+curl "$BASE/wx-geo-forward?q=Tokyo"
+
+# CORS Proxy（前端）
+curl "$BASE/wx-api-proxy?fn=wx-geo-forward&q=Tokyo"
+```
+
+> 早期文件混用了 `/wx/geo/forward`（REST 風格路徑）與 `wx-geo-forward`（Function 名稱）。**v0.9.1 起統一使用 Function 名稱格式。**
 
 ---
 
@@ -77,7 +97,7 @@ curl -X POST "$BASE/wx-refresh-hotspots-hourly" \
 |---|---|---|
 | `lat` | 緯度（-90 ~ 90） | — |
 | `lon` | 經度（-180 ~ 180） | — |
-| `place_id` | 精準位置識別（由 `/wx/geo/forward` 取得） | — |
+| `place_id` | 精準位置識別（由 `wx-geo-forward` 取得） | — |
 | `provider` | `auto \| open_meteo \| weatherapi \| tomorrow_io \| openweather` | `auto` |
 | `allow_live_fetch` | `true \| false`；false 時僅回傳 cron 已寫入的快取資料 | `true` |
 
@@ -329,9 +349,11 @@ curl "$BASE/wx-forecast-hourly?lat=22.3193&lon=114.1694&hours=24"
 
 ---
 
-### `GET /wx/forecast/daily` — 逐日預報
+### `GET /wx-forecast-daily` — 逐日預報
 
 取得未來最多 16 天的日級預報。
+
+> **時區說明（v0.9.1）**：回應中 `daily[].date` 為 **UTC 日期**（`YYYY-MM-DD`），以 UTC 午夜為日界線。`meta.timezone` 代表地點所屬時區，僅作參考用——客戶端如需顯示「本地今日」需自行換算。
 
 **Query 參數**
 
@@ -2307,29 +2329,66 @@ curl -X POST "$BASE/wx-hotspots-seed-global-cities" \
 
 ---
 
+## API 21：系統健康狀態（v0.9.1 新增）
+
+### `GET /wx-status` — 系統健康摘要
+
+回傳 DB 連線、供應商健康、Cron 工作排程與近期 ingest 健康度。
+
+```bash
+curl "$BASE/wx-status"
+```
+
+**預期回應 200（正常）/ 503（DB 異常）**
+
+```json
+{
+  "version": "0.9.1",
+  "ts": "2026-05-03T10:00:00.000Z",
+  "db": { "ok": true, "error": null },
+  "providers": [
+    { "provider": "open_meteo", "failure_rate_15m": 0.0, "p95_latency_ms": 242, "circuit_open": false, "circuit_open_until": null, "updated_at": "2026-05-03T09:58:00.000Z" },
+    { "provider": "weatherapi",  "failure_rate_15m": 0.05, "p95_latency_ms": 510, "circuit_open": false, "circuit_open_until": null, "updated_at": "2026-05-03T09:58:00.000Z" }
+  ],
+  "cron_jobs": [
+    { "jobname": "novaweather_refresh_hotspots_hourly", "schedule": "*/30 * * * *", "active": true, "next_run": "2026-05-03T10:30:00+00:00" },
+    { "jobname": "novaweather_prune_ingest_runs",       "schedule": "23 3 * * *",   "active": true, "next_run": "2026-05-04T03:23:00+00:00" }
+  ],
+  "cron_health": [
+    { "endpoint": "cron_refresh_hotspots_hourly", "last_ok": "2026-05-03T09:30:12.000Z", "last_error": null, "ok_1h": 2, "err_1h": 0, "stale": false, "max_age_sec": 2700 }
+  ],
+  "data_freshness": {
+    "latest_hourly_valid_time": "2026-05-03T12:00:00.000Z",
+    "latest_daily_fetched_at":  "2026-05-03T06:02:11.000Z",
+    "latest_alert_created_at":  "2026-05-03T09:45:33.000Z"
+  }
+}
+```
+
+> `cron_health[].stale = true` 表示該工作的上次成功執行超過 `max_age_sec` 秒，需要排查。
+
+---
+
 ## Cron 排程一覽
 
-共 17 個 `pg_cron` 排程任務：
+共 **18** 個 `pg_cron` 排程任務（v0.9.1 新增 `novaweather_prune_ingest_runs`）：
 
 | 排程名稱 | 週期 | 說明 |
 |---|---|---|
-| `novaweather_refresh_hourly` | 每 30 分鐘 | 熱點 hourly forecast 刷新 |
-| `novaweather_refresh_daily` | 每天 01:00 UTC | 熱點 daily forecast 刷新 |
-| `novaweather_observed_refresh` | 每 15 分鐘 | 熱點 observed rolling 刷新 |
-| `novaweather_cleanup_cache` | 每天 02:00 UTC | 清理過期 cache |
-| `novaweather_prune_series` | 每週日 03:00 UTC | 修剪舊時間序列 |
-| `novaweather_alerts_prune` | 每天 04:00 UTC | 清理過期警報 |
-| `novaweather_alerts_cap` | 每 10 分鐘 | CAP/Atom feeds ingest |
-| `novaweather_alerts_hko` | 每 5 分鐘 | HKO 警報 ingest |
-| `novaweather_alerts_smg` | 每 5 分鐘 | SMG 警報 ingest |
-| `novaweather_alerts_nws` | 每 5 分鐘 | NWS GeoJSON 警報 ingest |
-| `novaweather_airquality_refresh` | 每小時 | 空氣質素熱點刷新 |
-| `novaweather_marine_refresh` | 每 6 小時 | 海洋資料熱點刷新 |
-| `novaweather_metar_refresh` | 每 30 分鐘 | METAR 35 站刷新 |
-| `novaweather_provider_health` | 每 15 分鐘 | 供應商健康度計算 |
-| `novaweather_sync_region_codes` | 每天 06:00 UTC | Region code 同步 |
-| `novaweather_webhook_dispatch` | 每 5 分鐘 | Webhook 事件派送 |
-| `novaweather_prune_webhook_deliveries` | 每天 03:15 UTC | 清理 7 天前的派送記錄 |
+| `novaweather_refresh_hotspots_hourly` | `*/30 * * * *` | 熱點 hourly forecast 刷新 |
+| `novaweather_refresh_hotspots_daily` | `0 */6 * * *` | 熱點 daily forecast 刷新 |
+| `novaweather_observed_refresh_hotspots` | `*/15 * * * *` | 熱點 observed rolling 刷新 |
+| `novaweather_cleanup_expired_cache` | `17 * * * *` | 清理過期 cache（每小時第 17 分）|
+| `novaweather_prune_time_series` | `41 2 * * *` | 修剪舊時間序列（02:41 UTC）|
+| `novaweather_alerts_prune` | `53 2 * * *` | 清理過期警報（02:53 UTC）|
+| `novaweather_alerts_ingest_cap` | `*/10 * * * *` | CAP/Atom feeds ingest |
+| `novaweather_alerts_ingest_hko` | `*/5 * * * *` | HKO 警報 ingest |
+| `novaweather_alerts_ingest_smg` | `*/10 * * * *` | SMG 警報 ingest |
+| `novaweather_provider_health_refresh` | `*/5 * * * *` | 供應商健康度計算 |
+| `novaweather_prune_webhook_deliveries` | `15 3 * * *` | 清理 7 天前派送記錄（03:15 UTC）|
+| `novaweather_prune_ingest_runs` | `23 3 * * *` | **新增** 清理 7 天前 ingest_runs（03:23 UTC）|
+
+> 查詢即時狀態：`GET /wx-status` → `cron_jobs[]`（含 `next_run`）。
 
 ---
 
@@ -2362,7 +2421,7 @@ interface WxHourlyPoint {
 
 ```typescript
 interface WxDailyPoint {
-  date: string;                        // YYYY-MM-DD
+  date: string;                        // YYYY-MM-DD (UTC date, v0.9.1+)
   temp_min_c: number | null;
   temp_max_c: number | null;
   apparent_temp_min_c: number | null;

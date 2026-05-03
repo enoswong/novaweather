@@ -1,5 +1,6 @@
 // 修改說明：新增 CORS 代理 function，供 API 實測頁跨網域轉發 /wx* 端點
 // 影響文件：supabase/functions/wx-api-proxy/index.ts
+// v0.9.1：DELETE 方法限縮為僅允許 wx-webhook-register（避免誤刪其他資源）
 
 const CORS_HEADERS: Record<string, string> = {
   "access-control-allow-origin": "*",
@@ -7,6 +8,11 @@ const CORS_HEADERS: Record<string, string> = {
   "access-control-allow-headers": "authorization,content-type,x-client-info,apikey",
   "access-control-max-age": "86400",
 };
+
+// 只有這些 function 允許 DELETE 方法通過代理
+const DELETE_ALLOWED_FNS = new Set([
+  "wx-webhook-register",
+]);
 
 const ALLOWED_FUNCTIONS = new Set([
   // core
@@ -45,10 +51,11 @@ const ALLOWED_FUNCTIONS = new Set([
   "wx-anomaly",
   "wx-webhook-register",
   "wx-webhook-dispatch",
-  // maintenance
+  // maintenance / ops
   "wx-provider-health-refresh",
   "wx-cleanup-expired-cache",
   "wx-prune-time-series",
+  "wx-status",
 ]);
 
 function json(body: unknown, status = 200) {
@@ -72,6 +79,11 @@ Deno.serve(async (req) => {
     const fn = (requestUrl.searchParams.get("fn") ?? "").trim();
     if (!fn || !ALLOWED_FUNCTIONS.has(fn)) {
       return json({ error: "Invalid fn parameter" }, 400);
+    }
+
+    // DELETE 方法僅允許特定 function（限縮攻擊面）
+    if (req.method === "DELETE" && !DELETE_ALLOWED_FNS.has(fn)) {
+      return json({ error: `DELETE not permitted for ${fn}` }, 405);
     }
 
     const baseUrl = Deno.env.get("SUPABASE_URL");
