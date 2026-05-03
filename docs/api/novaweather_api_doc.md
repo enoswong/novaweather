@@ -888,6 +888,139 @@ curl "$BASE/wx-region-coverage?country_code=HK"
 
 ---
 
+## 可用國家 / 地區清單（Country & Region Coverage）
+
+> 資料來源：`GET /wx-region-coverage`，測試時間：2026-05-03  
+> **40 個國家，93 個地區**已建立索引。其中 **38 個國家**有即時天氣資料，2 個（MO、AE）地區已建立但尚未完成首次資料預取。
+
+### 圖例
+
+| 符號 | 說明 |
+|---|---|
+| ✅ | 有即時觀測 + 今日預報資料 |
+| ⚠️ | 地區已建立索引，但尚無快取資料（首次查詢會觸發 live fetch） |
+
+---
+
+### 亞洲
+
+| country_code | 國家 | 地區數 | 已覆蓋城市 / 地區 | 狀態 |
+|---|---|---|---|---|
+| `HK` | 香港 | 1 | Hong Kong Central | ✅ |
+| `MO` | 澳門 | 1 | Macau Urban | ⚠️ |
+| `TW` | 台灣 | 2 | Taipei City、Xinyi District | ✅ |
+| `CN` | 中國 | 11 | Beijing、Shenzhen Nanshan、Shanghai（Jing'ansi）、Guangzhou、Wansong 等 | ✅ |
+| `JP` | 日本 | 3 | Tokyo Chiyoda、Chiyoda、Osaka | ✅ |
+| `KR` | 韓國 | 2 | Seoul Jung-gu、Euljiro-dong | ✅ |
+| `SG` | 新加坡 | 2 | Singapore、Singapore Central | ✅ |
+| `IN` | 印度 | 11 | Mumbai、Delhi（Civil Lines）、Kolkata、Chennai、Bengaluru 等 | ✅ |
+| `BD` | 孟加拉 | 2 | Dhaka、Chattogram | ✅ |
+| `PK` | 巴基斯坦 | 2 | Karachi Division、Punjab | ✅ |
+| `TH` | 泰國 | 1 | Bangkok（Pom Prap Sattru Phai） | ✅ |
+| `VN` | 越南 | 2 | Ho Chi Minh City、Hanoi（Hoan Kiem） | ✅ |
+| `ID` | 印尼 | 1 | Jakarta（Gambir） | ✅ |
+| `PH` | 菲律賓 | 1 | Manila（Santa Cruz） | ✅ |
+| `MM` | 緬甸 | 1 | Yangon（Mingala Taungnyunt） | ✅ |
+| `IR` | 伊朗 | 1 | Tehran | ✅ |
+| `IQ` | 伊拉克 | 1 | Baghdad（Al Rasheed） | ✅ |
+| `SA` | 沙烏地阿拉伯 | 1 | Riyadh | ✅ |
+| `AE` | 阿聯酋 | 1 | Dubai Centre | ⚠️ |
+
+### 歐洲
+
+| country_code | 國家 | 地區數 | 已覆蓋城市 / 地區 | 狀態 |
+|---|---|---|---|---|
+| `GB` | 英國 | 2 | London Westminster、Greater London | ✅ |
+| `FR` | 法國 | 2 | Paris、Paris Centre | ✅ |
+| `DE` | 德國 | 1 | Berlin Mitte | ✅ |
+| `ES` | 西班牙 | 2 | Madrid、Barcelona | ✅ |
+| `TR` | 土耳其 | 2 | Istanbul（Hobyar Mahallesi、Hacettepe Mahallesi） | ✅ |
+| `RU` | 俄羅斯 | 2 | Moscow、Saint Petersburg | ✅ |
+
+### 美洲
+
+| country_code | 國家 | 地區數 | 已覆蓋城市 / 地區 | 狀態 |
+|---|---|---|---|---|
+| `US` | 美國 | 12 | New York Manhattan、Los Angeles、Chicago、Miami、Atlanta、Boston、Houston、Dallas、Philadelphia、Phoenix、San Antonio、San Diego | ✅ |
+| `CA` | 加拿大 | 1 | Toronto | ✅ |
+| `MX` | 墨西哥 | 2 | Mexico City（Cuauhtémoc）、Guadalajara | ✅ |
+| `BR` | 巴西 | 6 | São Paulo、Rio de Janeiro、Minas Gerais、São Paulo Centro、Rio Grande do Sul 等 | ✅ |
+| `AR` | 阿根廷 | 1 | Buenos Aires | ✅ |
+| `CL` | 智利 | 1 | Santiago | ✅ |
+| `CO` | 哥倫比亞 | 1 | Bogotá（Los Mártires） | ✅ |
+| `PE` | 秘魯 | 1 | Lima | ✅ |
+
+### 大洋洲
+
+| country_code | 國家 | 地區數 | 已覆蓋城市 / 地區 | 狀態 |
+|---|---|---|---|---|
+| `AU` | 澳洲 | 3 | Sydney、Sydney CBD、Melbourne | ✅ |
+
+### 非洲
+
+| country_code | 國家 | 地區數 | 已覆蓋城市 / 地區 | 狀態 |
+|---|---|---|---|---|
+| `EG` | 埃及 | 2 | Cairo、Alexandria | ✅ |
+| `NG` | 奈及利亞 | 1 | Lagos | ✅ |
+| `AO` | 安哥拉 | 1 | Luanda | ✅ |
+| `CD` | 剛果（民主共和國） | 1 | Kinshasa（Djalo） | ✅ |
+| `CI` | 科特迪瓦 | 1 | Abidjan（Le Plateau） | ✅ |
+| `SD` | 蘇丹 | 1 | Khartoum | ✅ |
+
+---
+
+### 使用範例
+
+**查詢某國所有地區今日天氣**
+
+```bash
+# 美國（12 個地區）
+curl "$BASE/wx-country-today?country_code=US"
+
+# 中國（11 個地區）
+curl "$BASE/wx-country-today?country_code=CN"
+
+# 香港（1 個地區）
+curl "$BASE/wx-country-today?country_code=HK"
+```
+
+**查詢單一地區詳細天氣**
+
+```bash
+# 香港 Central
+curl "$BASE/wx-region?country_code=HK&region_code=hong-kong-central-wecnyk"
+
+# 東京 Chiyoda
+curl "$BASE/wx-region?country_code=JP&region_code=tokyo-chiyoda-xn774c"
+
+# 紐約 Manhattan
+curl "$BASE/wx-region?country_code=US&region_code=new-york-manhattan-dr5reg"
+
+# 倫敦 Westminster
+curl "$BASE/wx-region?country_code=GB&region_code=london-westminster-gcpvj0"
+
+# 台北市
+curl "$BASE/wx-region?country_code=TW&region_code=taipei-city-wsqqqq"
+
+# 新加坡
+curl "$BASE/wx-region?country_code=SG&region_code=singapore-w21z77"
+```
+
+**取得覆蓋率報告**
+
+```bash
+# 全部國家
+curl "$BASE/wx-region-coverage"
+
+# 指定國家
+curl "$BASE/wx-region-coverage?country_code=US"
+```
+
+> 地區資料每 30 分鐘由 `pg_cron` 自動同步（`novaweather_sync_region_codes`）。  
+> 若需新增城市，可透過 `POST /wx-sync-region-codes` 手動觸發同步，或直接以 `lat/lon` 呼叫任意天氣端點（會自動建立地點索引）。
+
+---
+
 ## API 8：Air Quality — 空氣質素
 
 ### `GET /wx-air-quality` — 小時級空氣質素預報
