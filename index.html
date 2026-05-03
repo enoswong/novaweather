@@ -4,6 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>NovaWeather Dashboard v1.0</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <style>
     /* ── Design tokens ── */
     :root {
@@ -297,6 +299,63 @@
       header { padding: 12px; gap: 10px; }
       .wx-temp { font-size: 2.5rem; }
     }
+
+    /* ── Locate / Map buttons ── */
+    .btn-locate {
+      background: var(--card-2); border: 1px solid var(--border);
+      color: var(--text); padding: 7px 12px;
+      font-size: 0.85rem; border-radius: var(--radius-sm);
+    }
+    .btn-locate:hover { border-color: var(--ok); color: var(--ok); }
+    .btn-map { }
+    .btn-map:hover { border-color: var(--blue); color: var(--blue); }
+
+    /* ── Map modal overlay ── */
+    .map-modal-overlay {
+      position: fixed; inset: 0; z-index: 9999;
+      background: rgba(0,0,0,.72);
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0; pointer-events: none;
+      transition: opacity .2s;
+    }
+    .map-modal-overlay.open { opacity: 1; pointer-events: all; }
+    .map-modal-panel {
+      background: var(--card);
+      border: 1px solid var(--border-2);
+      border-radius: 16px;
+      width: 90vw; max-width: 920px;
+      height: 85vh; max-height: 700px;
+      display: flex; flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 24px 80px rgba(0,0,0,.6);
+    }
+    .map-modal-header {
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      padding: 14px 18px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .map-modal-title { font-weight: 700; font-size: .95rem; }
+    .map-coords-display {
+      font-family: var(--mono); font-size: .82rem;
+      color: var(--ok); background: var(--ok-bg);
+      border: 1px solid var(--ok); border-radius: 6px;
+      padding: 3px 8px;
+    }
+    .map-place-name {
+      flex: 1; font-size: .82rem; color: var(--muted);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .map-modal-actions { display: flex; gap: 8px; margin-left: auto; }
+    #map-container { flex: 1; min-height: 0; }
+    .map-footer {
+      padding: 10px 16px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      font-size: .75rem; color: var(--dim);
+      flex-shrink: 0;
+    }
   </style>
 </head>
 <body>
@@ -319,6 +378,8 @@
         <label>Lon</label>
         <input id="lon" type="number" step="0.01" value="114.16" style="width:95px" />
       </div>
+      <button id="locateBtn" class="btn-locate" title="使用瀏覽器定位自動填入座標">📍 定位</button>
+      <button id="openMapBtn" class="btn-locate btn-map" title="在地圖上選擇座標">🗺 地圖</button>
       <div class="input-group">
         <label>Provider</label>
         <select id="provider">
@@ -492,6 +553,23 @@
     </div>
 
   </main>
+</div>
+
+<!-- ═══════════════ MAP MODAL ═══════════════ -->
+<div id="map-modal" class="map-modal-overlay" role="dialog" aria-modal="true" aria-label="選擇座標">
+  <div class="map-modal-panel">
+    <div class="map-modal-header">
+      <span class="map-modal-title">📍 選擇座標</span>
+      <span id="map-coords-display" class="map-coords-display">22.31000, 114.16000</span>
+      <span id="map-place-name" class="map-place-name">正在查詢地名…</span>
+      <div class="map-modal-actions">
+        <button id="mapConfirm" class="btn-primary" style="padding:6px 16px">✓ 確認</button>
+        <button id="mapClose" style="padding:6px 12px" title="關閉">✕</button>
+      </div>
+    </div>
+    <div id="map-container"></div>
+    <div class="map-footer">點擊地圖或拖曳標記來選擇位置 · 確認後自動更新所有 API 資料</div>
+  </div>
 </div>
 
 <script>
@@ -988,6 +1066,144 @@ el("stopAuto").addEventListener("click", stopAuto);
 el("openApiDoc").addEventListener("click", () =>
   window.open(new URL("./docs/api/novaweather_api_doc.md", location.href).href, "_blank", "noopener,noreferrer")
 );
+
+// ═══════════════════════════════════════════════════════════════════
+//  Geolocation — auto-detect
+// ═══════════════════════════════════════════════════════════════════
+function locateMe() {
+  const btn = el("locateBtn");
+  if (!navigator.geolocation) {
+    alert("您的瀏覽器不支援 Geolocation API，請手動輸入座標。");
+    return;
+  }
+  btn.textContent = "⏳ 定位中…";
+  btn.disabled = true;
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      el("lat").value = pos.coords.latitude.toFixed(5);
+      el("lon").value = pos.coords.longitude.toFixed(5);
+      btn.textContent = "📍 定位";
+      btn.disabled = false;
+      runAllOnce();
+    },
+    err => {
+      btn.textContent = "📍 定位";
+      btn.disabled = false;
+      const msgs = {
+        1: "使用者拒絕定位授權。請在瀏覽器設定中允許位置存取。",
+        2: "無法取得位置資訊，請確認 GPS 或網路連線。",
+        3: "定位逾時，請重試。",
+      };
+      alert(msgs[err.code] || `定位失敗: ${err.message}`);
+    },
+    { enableHighAccuracy: true, timeout: 12000, maximumAge: 30000 }
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  Map picker — Leaflet + OpenStreetMap + Nominatim
+// ═══════════════════════════════════════════════════════════════════
+let leafletMap = null, mapMarker = null;
+let mapPendingLat = 22.31, mapPendingLon = 114.16;
+let nominatimTimer = null;
+
+function openMap() {
+  const ll = latLon();
+  mapPendingLat = parseFloat(ll.lat) || 22.31;
+  mapPendingLon = parseFloat(ll.lon) || 114.16;
+  el("map-modal").classList.add("open");
+  updateMapCoordsDisplay();
+
+  // Give the modal time to paint before init/resize
+  setTimeout(() => {
+    if (!leafletMap) {
+      // First open: init the map
+      leafletMap = L.map("map-container", { zoomControl: true }).setView([mapPendingLat, mapPendingLon], 12);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        maxZoom: 19,
+      }).addTo(leafletMap);
+
+      // Custom icon using div so no external image needed
+      const icon = L.divIcon({
+        className: "",
+        html: '<div style="width:22px;height:22px;background:#6366f1;border:3px solid #fff;border-radius:50%;box-shadow:0 2px 8px rgba(0,0,0,.5)"></div>',
+        iconSize: [22, 22],
+        iconAnchor: [11, 11],
+      });
+      mapMarker = L.marker([mapPendingLat, mapPendingLon], { draggable: true, icon }).addTo(leafletMap);
+
+      // Drag end
+      mapMarker.on("dragend", e => {
+        const pos = e.target.getLatLng();
+        mapPendingLat = pos.lat;
+        mapPendingLon = pos.lng;
+        updateMapCoordsDisplay();
+        reverseGeocode(mapPendingLat, mapPendingLon);
+      });
+
+      // Click map to move marker
+      leafletMap.on("click", e => {
+        mapPendingLat = e.latlng.lat;
+        mapPendingLon = e.latlng.lng;
+        mapMarker.setLatLng(e.latlng);
+        updateMapCoordsDisplay();
+        reverseGeocode(mapPendingLat, mapPendingLon);
+      });
+    } else {
+      // Subsequent opens: move to current coords
+      leafletMap.setView([mapPendingLat, mapPendingLon], 12);
+      mapMarker.setLatLng([mapPendingLat, mapPendingLon]);
+      leafletMap.invalidateSize();
+    }
+    reverseGeocode(mapPendingLat, mapPendingLon);
+  }, 80);
+}
+
+function closeMap() {
+  el("map-modal").classList.remove("open");
+}
+
+function confirmMap() {
+  el("lat").value = mapPendingLat.toFixed(5);
+  el("lon").value = mapPendingLon.toFixed(5);
+  closeMap();
+  runAllOnce();
+}
+
+function updateMapCoordsDisplay() {
+  el("map-coords-display").textContent =
+    `${mapPendingLat.toFixed(5)}, ${mapPendingLon.toFixed(5)}`;
+}
+
+function reverseGeocode(lat, lon) {
+  if (nominatimTimer) clearTimeout(nominatimTimer);
+  el("map-place-name").textContent = "正在查詢地名…";
+  // Debounce 400ms to avoid hammering Nominatim while dragging
+  nominatimTimer = setTimeout(async () => {
+    try {
+      const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&zoom=14`;
+      const resp = await fetch(url, { headers: { "Accept-Language": "zh-Hant,zh;q=0.9,en;q=0.8" } });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      // Show first 3 components of display_name
+      const parts = (data.display_name ?? "").split(",").map(s => s.trim()).filter(Boolean);
+      el("map-place-name").textContent = parts.slice(0, 4).join(", ") || `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+    } catch {
+      el("map-place-name").textContent = `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+    }
+  }, 400);
+}
+
+// ── Map / Locate event wiring ──
+el("locateBtn").addEventListener("click", locateMe);
+el("openMapBtn").addEventListener("click", openMap);
+el("mapConfirm").addEventListener("click", confirmMap);
+el("mapClose").addEventListener("click", closeMap);
+// Click backdrop to close
+el("map-modal").addEventListener("click", e => { if (e.target === el("map-modal")) closeMap(); });
+// ESC key to close
+document.addEventListener("keydown", e => { if (e.key === "Escape" && el("map-modal").classList.contains("open")) closeMap(); });
 
 // ── Init ──
 updateHealthChips();
