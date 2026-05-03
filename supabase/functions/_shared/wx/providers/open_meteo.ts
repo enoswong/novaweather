@@ -1,8 +1,9 @@
 // 修改說明：Open‑Meteo provider adapter（主力，無需 API key）
 // 影響文件：supabase/functions/_shared/wx/providers/open_meteo.ts
 // UTC 策略：強制 timezone=UTC，所有時間以 UTC 為基準存入 DB
+// v1.0.0: 新增 fetchOpenMeteoNowcast（minutely_15 近端短效預報）
 
-import type { WxDailyPoint, WxHourlyPoint } from "../types.ts";
+import type { WxDailyPoint, WxHourlyPoint, WxNowcastPoint } from "../types.ts";
 
 type OpenMeteoHourly = {
   time: string[];
@@ -165,6 +166,86 @@ export async function fetchOpenMeteoForecast(params: {
     fetched_at: fetchedAt,
     hourly,
     daily,
+    source_latency_ms: Number.isFinite(latency) ? latency : null,
+  };
+}
+
+// ── Nowcast (minutely_15) ──────────────────────────────────────────────────
+// Open-Meteo 的最細粒度為 15 分鐘，非 per-minute。
+// 用於 wx-environment-timeline 的「未來 N 分鐘」降雨/風速預報。
+// 注意：此資料不寫入長期 DB（wx_hourly_series），僅透過短效快取（TTL 5 分鐘）使用。
+
+export async function fetchOpenMeteoNowcast(params: {
+  lat: number;
+  lon: number;
+  minuteWindow?: number; // 需要覆蓋的分鐘數，預設 180（最大 minute_window）
+}): Promise<{
+  points: WxNowcastPoint[];
+  fetched_at: string;
+  source_latency_ms: number | null;
+}> {
+  const { lat, lon, minuteWindow = 180 } = params;
+
+  // forecast_minutely_15: 要抓取的 15 分鐘步數
+  // 例如：minuteWindow=60 → 4 步；minuteWindow=180 → 12 步（3 小時）
+  const steps = Math.min(Math.ceil(minuteWindow / 15), 12); // 最多 3 小時
+
+  const url = new URL("https://api.open-meteo.com/v1/forecast");
+  url.searchParams.set("latitude", String(lat));
+  url.searchParams.set("longitude", String(lon));
+  url.searchParams.set("minutely_15", [
+    "precipitation",           // mm per 15min interval
+    "precipitation_probability", // 0–100 (integer %)
+    "wind_speed_10m",          // m/s
+    "wind_gusts_10m",          // m/s
+  ].join(","));
+  url.searchParams.set("forecast_minutely_15", String(steps));
+  url.searchParams.set("timezone", "UTC");
+
+  const t0 = performance.now();
+  const res = await fetch(url.toString(), { signal: AbortSignal.timeout(8000) });
+  const latency = Math.round(performance.now() - t0);
+
+  if (!res.ok) {
+    throw new Error(`Open-Meteo Nowcast HTTP ${res.status}`);
+  }
+
+  const fetchedAt = new Date().toISOString();
+  const data = await res.json() as {
+    minutely_15?: {
+      time: string[];
+      precipitation?: number[];
+      precipitation_probability?: number[];
+      wind_speed_10m?: number[];
+      wind_gusts_10m?: number[];
+    };
+  };
+
+  const m15 = data.minutely_15;
+  const points: WxNowcastPoint[] = [];
+
+  if (m15?.time?.length) {
+    for (let i = 0; i < m15.time.length; i++) {
+      // precipitation は 15 分間隔の降水量（mm）→ mm/h に換算（× 4）
+      const rawPrecip = m15.precipitation?.[i] ?? null;
+      const precip_mm_h = rawPrecip != null ? Number((rawPrecip * 4).toFixed(3)) : null;
+      // precipitation_probability は 0–100（整数 %）→ 0–1 に正規化
+      const rawProb = m15.precipitation_probability?.[i] ?? null;
+      const precip_prob = rawProb != null ? rawProb / 100 : null;
+
+      points.push({
+        valid_time: new Date(m15.time[i] + "Z").toISOString(),
+        precip_mm_h,
+        precip_prob,
+        wind_ms: m15.wind_speed_10m?.[i] ?? null,
+        gust_ms: m15.wind_gusts_10m?.[i] ?? null,
+      });
+    }
+  }
+
+  return {
+    points,
+    fetched_at: fetchedAt,
     source_latency_ms: Number.isFinite(latency) ? latency : null,
   };
 }

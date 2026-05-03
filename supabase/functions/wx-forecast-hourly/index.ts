@@ -2,7 +2,7 @@
 // 影響文件：supabase/functions/wx-forecast-hourly/index.ts
 
 import { jsonError, jsonResponse } from "../_shared/wx/http.ts";
-import { fetchForecastWithProvider, defaultProviderPriority } from "../_shared/wx/provider_chain.ts";
+import { fetchForecastWithProvider, defaultProviderPriority, geoRoutedPriority } from "../_shared/wx/provider_chain.ts";
 import { buildCacheKey, recordIngestRun, tryReadCache, upsertHourlySeries, writeCache } from "../_shared/wx/storage.ts";
 import type { WxHourlyForecastResponse, WxProvider } from "../_shared/wx/types.ts";
 import { clampInt } from "../_shared/wx/validate.ts";
@@ -82,8 +82,8 @@ Deno.serve(async (req) => {
     }
 
     const chain = provider === "auto"
-      ? defaultProviderPriority()
-      : [provider as Exclude<WxProvider, "auto">];
+      ? geoRoutedPriority(loc.country_code)
+      : [provider as Exclude<WxProvider, "auto" | "nova_ensemble">];
 
     let lastError: Error | null = null;
     for (const p of chain) {

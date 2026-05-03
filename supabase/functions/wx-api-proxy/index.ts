@@ -1,11 +1,13 @@
 // 修改說明：新增 CORS 代理 function，供 API 實測頁跨網域轉發 /wx* 端點
 // 影響文件：supabase/functions/wx-api-proxy/index.ts
 // v0.9.1：DELETE 方法限縮為僅允許 wx-webhook-register（避免誤刪其他資源）
+// v1.0.0-alpha：加入可選 API Key 驗證（X-WxApi-Key header）；
+//               新增 wx-webhook-fanout / wx-webhook-worker 至白名單
 
 const CORS_HEADERS: Record<string, string> = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET,POST,DELETE,OPTIONS",
-  "access-control-allow-headers": "authorization,content-type,x-client-info,apikey",
+  "access-control-allow-headers": "authorization,content-type,x-client-info,apikey,x-wxapi-key",
   "access-control-max-age": "86400",
 };
 
@@ -51,6 +53,8 @@ const ALLOWED_FUNCTIONS = new Set([
   "wx-anomaly",
   "wx-webhook-register",
   "wx-webhook-dispatch",
+  "wx-webhook-fanout",
+  "wx-webhook-worker",
   // maintenance / ops
   "wx-provider-health-refresh",
   "wx-cleanup-expired-cache",
@@ -75,6 +79,17 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // v1.0.0-alpha: 可選 API Key 驗證
+    // 若 WX_PUBLIC_API_KEY secret 已設定，所有請求必須帶 X-WxApi-Key header 且值相符。
+    // 未設定時跳過驗證（向前相容），方便本地開發。
+    const API_KEY = Deno.env.get("WX_PUBLIC_API_KEY");
+    if (API_KEY) {
+      const clientKey = req.headers.get("x-wxapi-key");
+      if (clientKey !== API_KEY) {
+        return json({ error: "Unauthorized", hint: "Provide X-WxApi-Key header" }, 401);
+      }
+    }
+
     const requestUrl = new URL(req.url);
     const fn = (requestUrl.searchParams.get("fn") ?? "").trim();
     if (!fn || !ALLOWED_FUNCTIONS.has(fn)) {
@@ -122,4 +137,3 @@ Deno.serve(async (req) => {
     return json({ error: "Proxy error", detail }, 500);
   }
 });
-

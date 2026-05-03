@@ -1,8 +1,12 @@
 // 修改說明：新增 /wx/environment/timeline（分/時/日與未來數天環境變化與極端風險）
 // 影響文件：supabase/functions/wx-environment-timeline/index.ts
+// v1.0.0: 整合 Open-Meteo minutely_15 臨近預報（nowcasting），
+//         取代原有線性插值作為 minute 序列資料源（降級至線性插值）
 
 import { jsonError, jsonResponse } from "../_shared/wx/http.ts";
-import { fetchForecastWithProvider, defaultProviderPriority } from "../_shared/wx/provider_chain.ts";
+import { fetchForecastWithProvider, geoRoutedPriority } from "../_shared/wx/provider_chain.ts";
+import { fetchOpenMeteoNowcast } from "../_shared/wx/providers/open_meteo.ts";
+import { buildCacheKey, tryReadCache, writeCache } from "../_shared/wx/storage.ts";
 import { getSupabaseAdminClient } from "../_shared/wx/supabase.ts";
 import { resolveLocationFromRequest } from "../_shared/wx/location.ts";
 import type {
@@ -12,6 +16,7 @@ import type {
   WxEnvironmentMinutePoint,
   WxEnvironmentTimelineResponse,
   WxHourlyPoint,
+  WxNowcastPoint,
   WxProvider,
   WxRiskReason,
 } from "../_shared/wx/types.ts";
@@ -135,27 +140,128 @@ function riskFromAtmosphere(args: {
   return { risk_level: risk, reasons, tags };
 }
 
+/**
+ * 建立分鐘級序列。
+ *
+ * 優先使用 Open-Meteo minutely_15 真實資料（15 分鐘粒度），
+ * 在 15 分鐘點之間線性插值至 1 分鐘解析度。
+ * temp_c / humidity_pct 不在 nowcast 中，從 observed → hourly[0] 線性插值。
+ *
+ * 若 nowcast 無資料（空陣列或 fetch 失敗），降回全量線性插值（原有行為）。
+ */
 function buildMinuteSeries(args: {
   minuteWindow: number;
   observed: WxHourlyPoint | null;
   hourly: WxHourlyPoint[];
   activeAlertsCount: number;
+  nowcastPoints: WxNowcastPoint[];
 }): WxEnvironmentMinutePoint[] {
-  const { minuteWindow, observed, hourly, activeAlertsCount } = args;
+  const { minuteWindow, observed, hourly, activeAlertsCount, nowcastPoints } = args;
   const now = Date.now();
   const first = hourly[0] ?? null;
   const start = observed ?? first;
-  if (!start) return [];
+  if (!start && nowcastPoints.length === 0) return [];
 
-  const startTemp = safeNum(start.temp_c);
+  // ── 基礎溫度/濕度（從 observed → hourly[0] 插值，nowcast 不含這兩個欄位）
+  const startTemp = safeNum(start?.temp_c);
   const endTemp = safeNum(first?.temp_c);
-  const startHum = safeNum(start.humidity_pct);
+  const startHum = safeNum(start?.humidity_pct);
   const endHum = safeNum(first?.humidity_pct);
-  const startProb = safeNum(start.precip_prob);
+
+  const points: WxEnvironmentMinutePoint[] = [];
+
+  if (nowcastPoints.length >= 2) {
+    // ── Nowcast 路徑：使用真實 minutely_15 資料，插值至 1 分鐘解析度
+    const cutoffMs = now + minuteWindow * 60 * 1000;
+
+    // 只保留未來 minuteWindow 分鐘內的點
+    const relevant = nowcastPoints.filter(
+      (p) => new Date(p.valid_time).getTime() <= cutoffMs,
+    );
+    if (relevant.length === 0) {
+      // nowcast 資料點全在窗口外（不應發生），降回線性插值
+      return buildMinuteLinearFallback(
+        { minuteWindow, startTemp, endTemp, startHum, endHum, start, first, activeAlertsCount, now },
+      );
+    }
+
+    for (let m = 1; m <= minuteWindow; m++) {
+      const targetMs = now + m * 60 * 1000;
+      if (targetMs > cutoffMs) break;
+
+      // 找到包圍 targetMs 的兩個 nowcast 點，線性插值
+      let p0 = relevant[0];
+      let p1 = relevant[relevant.length - 1];
+      for (let i = 0; i < relevant.length - 1; i++) {
+        const t0 = new Date(relevant[i].valid_time).getTime();
+        const t1 = new Date(relevant[i + 1].valid_time).getTime();
+        if (targetMs >= t0 && targetMs <= t1) {
+          p0 = relevant[i];
+          p1 = relevant[i + 1];
+          break;
+        }
+      }
+      const t0Ms = new Date(p0.valid_time).getTime();
+      const t1Ms = new Date(p1.valid_time).getTime();
+      const alpha = t1Ms > t0Ms ? (targetMs - t0Ms) / (t1Ms - t0Ms) : 0;
+
+      const precip_prob = lerp(p0.precip_prob, p1.precip_prob, alpha);
+      const wind_ms = lerp(p0.wind_ms, p1.wind_ms, alpha);
+      const gust_ms = lerp(p0.gust_ms, p1.gust_ms, alpha);
+      // precip_mm_h → 近似為 mm/h（用作 risk 判斷的 precip_mm 替代）
+      const precip_mm_h = lerp(p0.precip_mm_h, p1.precip_mm_h, alpha);
+
+      // temp / humidity 仍用全局線性插值
+      const tGlobal = m / minuteWindow;
+      const temp_c = lerp(startTemp, endTemp, tGlobal);
+      const humidity_pct = lerp(startHum, endHum, tGlobal);
+
+      const risk = riskFromAtmosphere({
+        temp_c,
+        humidity_pct,
+        precip_prob,
+        precip_mm: precip_mm_h, // mm/h ≈ mm within 1-minute window
+        wind_ms,
+        gust_ms,
+        activeAlertsCount,
+      });
+
+      points.push({
+        valid_time: new Date(targetMs).toISOString(),
+        temp_c: temp_c == null ? null : Number(temp_c.toFixed(2)),
+        humidity_pct: humidity_pct == null ? null : Number(humidity_pct.toFixed(1)),
+        precip_prob: precip_prob == null ? null : Number(precip_prob.toFixed(3)),
+        wind_ms: wind_ms == null ? null : Number(wind_ms.toFixed(2)),
+        gust_ms: gust_ms == null ? null : Number(gust_ms.toFixed(2)),
+        risk,
+      });
+    }
+    return points;
+  }
+
+  // ── 降級：全量線性插值（原有行為）
+  return buildMinuteLinearFallback(
+    { minuteWindow, startTemp, endTemp, startHum, endHum, start, first, activeAlertsCount, now },
+  );
+}
+
+function buildMinuteLinearFallback(args: {
+  minuteWindow: number;
+  startTemp: number | null;
+  endTemp: number | null;
+  startHum: number | null;
+  endHum: number | null;
+  start: WxHourlyPoint | null;
+  first: WxHourlyPoint | null;
+  activeAlertsCount: number;
+  now: number;
+}): WxEnvironmentMinutePoint[] {
+  const { minuteWindow, startTemp, endTemp, startHum, endHum, start, first, activeAlertsCount, now } = args;
+  const startProb = safeNum(start?.precip_prob);
   const endProb = safeNum(first?.precip_prob);
-  const startWind = safeNum(start.wind_ms);
+  const startWind = safeNum(start?.wind_ms);
   const endWind = safeNum(first?.wind_ms);
-  const startGust = safeNum(start.gust_ms);
+  const startGust = safeNum(start?.gust_ms);
   const endGust = safeNum(first?.gust_ms);
 
   const points: WxEnvironmentMinutePoint[] = [];
@@ -212,32 +318,44 @@ Deno.serve(async (req) => {
       String(today.getUTCDate()).padStart(2, "0")
     }`;
 
-    const [{ data: hourlyRows, error: hourlyErr }, { data: dailyRows, error: dailyErr }, { data: observedRows, error: observedErr }] = await Promise
-      .all([
-        supabase
-          .from("wx_hourly_series")
-          .select("valid_time,temp_c,feels_like_c,humidity_pct,dewpoint_c,pressure_hpa,wind_ms,wind_dir_deg,gust_ms,precip_mm,precip_prob,snow_mm,cloud_pct,visibility_m,uv_index,provider,fetched_at,confidence")
-          .eq("geohash", geohash)
-          .eq("kind", "forecast")
-          .gte("valid_time", nowIso)
-          .lte("valid_time", endIso)
-          .order("valid_time", { ascending: true })
-          .limit(windowHours),
-        supabase
-          .from("wx_daily_series")
-          .select("date,t_min_c,t_max_c,precip_sum_mm,precip_prob_max,wind_max_ms,uv_max,provider,fetched_at,confidence")
-          .eq("geohash", geohash)
-          .gte("date", todayDate)
-          .order("date", { ascending: true })
-          .limit(days),
-        supabase
-          .from("wx_hourly_series")
-          .select("valid_time,temp_c,feels_like_c,humidity_pct,dewpoint_c,pressure_hpa,wind_ms,wind_dir_deg,gust_ms,precip_mm,precip_prob,snow_mm,cloud_pct,visibility_m,uv_index,provider,fetched_at,confidence")
-          .eq("geohash", geohash)
-          .eq("kind", "observed")
-          .order("valid_time", { ascending: false })
-          .limit(1),
-      ]);
+    // ── 並行：DB 查詢 + nowcast（nowcast TTL=5min 快取）──────────────────────
+    const nowcastCacheKey = buildCacheKey({
+      geohash,
+      endpoint: "minutely_15_nowcast",
+      params: { minute_window: minuteWindow },
+    });
+
+    const [
+      { data: hourlyRows, error: hourlyErr },
+      { data: dailyRows, error: dailyErr },
+      { data: observedRows, error: observedErr },
+      nowcastCached,
+    ] = await Promise.all([
+      supabase
+        .from("wx_hourly_series")
+        .select("valid_time,temp_c,feels_like_c,humidity_pct,dewpoint_c,pressure_hpa,wind_ms,wind_dir_deg,gust_ms,precip_mm,precip_prob,snow_mm,cloud_pct,visibility_m,uv_index,provider,fetched_at,confidence")
+        .eq("geohash", geohash)
+        .eq("kind", "forecast")
+        .gte("valid_time", nowIso)
+        .lte("valid_time", endIso)
+        .order("valid_time", { ascending: true })
+        .limit(windowHours),
+      supabase
+        .from("wx_daily_series")
+        .select("date,t_min_c,t_max_c,precip_sum_mm,precip_prob_max,wind_max_ms,uv_max,provider,fetched_at,confidence")
+        .eq("geohash", geohash)
+        .gte("date", todayDate)
+        .order("date", { ascending: true })
+        .limit(days),
+      supabase
+        .from("wx_hourly_series")
+        .select("valid_time,temp_c,feels_like_c,humidity_pct,dewpoint_c,pressure_hpa,wind_ms,wind_dir_deg,gust_ms,precip_mm,precip_prob,snow_mm,cloud_pct,visibility_m,uv_index,provider,fetched_at,confidence")
+        .eq("geohash", geohash)
+        .eq("kind", "observed")
+        .order("valid_time", { ascending: false })
+        .limit(1),
+      tryReadCache(supabase, nowcastCacheKey),
+    ]);
 
     if (hourlyErr) throw hourlyErr;
     if (dailyErr) throw dailyErr;
@@ -252,7 +370,7 @@ Deno.serve(async (req) => {
     >;
 
     if ((hourly.length === 0 || daily.length === 0) && allowLiveFetch) {
-      const chain = provider === "auto" ? defaultProviderPriority() : [provider as Exclude<WxProvider, "auto">];
+      const chain = provider === "auto" ? geoRoutedPriority(loc.country_code) : [provider as Exclude<WxProvider, "auto" | "nova_ensemble">];
       for (const p of chain) {
         try {
           const r = await fetchForecastWithProvider({
@@ -281,11 +399,39 @@ Deno.serve(async (req) => {
     if (alertsErr) throw alertsErr;
     const activeAlertsCount = (alerts ?? []).length;
 
+    // ── Nowcasting（minutely_15）───────────────────────────────────────────
+    // 優先從快取取得；未命中則 live fetch Open-Meteo，成功後寫入快取（TTL 5 分鐘）
+    let nowcastPoints: WxNowcastPoint[] = [];
+
+    if (nowcastCached?.isFresh) {
+      nowcastPoints = (nowcastCached.payload as WxNowcastPoint[]) ?? [];
+    } else {
+      try {
+        const nc = await fetchOpenMeteoNowcast({ lat: loc.lat, lon: loc.lon, minuteWindow });
+        nowcastPoints = nc.points;
+        if (nowcastPoints.length > 0) {
+          await writeCache(supabase, {
+            cache_key: nowcastCacheKey,
+            geohash,
+            endpoint: "minutely_15_nowcast",
+            params: { minute_window: minuteWindow },
+            payload: nowcastPoints,
+            ttlSeconds: 5 * 60, // 5 分鐘短效快取
+            fetched_at: nc.fetched_at,
+          });
+        }
+      } catch (e) {
+        // nowcast fetch 失敗 → 靜默降級至線性插值，不影響主流程
+        console.warn("Nowcast fetch failed, using linear interpolation:", e instanceof Error ? e.message : String(e));
+      }
+    }
+
     const minute = buildMinuteSeries({
       minuteWindow,
       observed,
       hourly,
       activeAlertsCount,
+      nowcastPoints,
     });
 
     const hourlyTimeline: WxEnvironmentHourlyPoint[] = hourly.map((h) => ({

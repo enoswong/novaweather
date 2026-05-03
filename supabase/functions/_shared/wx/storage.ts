@@ -1,5 +1,6 @@
 // 修改說明：快取與時間序列寫入（wx_cache / wx_hourly_series / wx_daily_series）
 // 影響文件：supabase/functions/_shared/wx/storage.ts
+// v1.0.0-alpha: 快取鍵優化 — hours 量化 + 移除 provider（減少快取碎片）
 
 import type {
   WxDailyPoint,
@@ -7,15 +8,32 @@ import type {
   WxProvider,
 } from "./types.ts";
 
+// 將 hours 向上量化至固定級別，減少快取鍵種類
+// 例如：hours=50 → 72（命中與 hours=72 相同的快取），hours=100 → 120
+const HOUR_LEVELS = [24, 48, 72, 120, 168] as const;
+
+function normalizeHours(hours: number): number {
+  return HOUR_LEVELS.find((l) => l >= hours) ?? 168;
+}
+
 export function buildCacheKey(args: {
   geohash: string;
   endpoint: string;
   params: Record<string, unknown>;
 }): string {
   const { geohash, endpoint, params } = args;
+  // 複製 params 以避免修改原始物件
+  const normalized: Record<string, unknown> = { ...params };
+  // provider 不納入快取鍵：實際 provider 記錄在 payload.meta.provider，
+  // 讓 provider=auto 和 provider=open_meteo 命中同一個快取。
+  delete normalized.provider;
+  // hours 量化至固定級別
+  if ("hours" in normalized) {
+    normalized.hours = normalizeHours(Number(normalized.hours));
+  }
   const parts: string[] = [geohash, endpoint];
-  const keys = Object.keys(params).sort();
-  for (const k of keys) parts.push(`${k}=${String(params[k])}`);
+  const keys = Object.keys(normalized).sort();
+  for (const k of keys) parts.push(`${k}=${String(normalized[k])}`);
   return parts.join("|");
 }
 

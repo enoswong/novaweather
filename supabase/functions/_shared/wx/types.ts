@@ -1,9 +1,13 @@
 // 修改說明：定義 /wx/* 統一資料契約型別（SI 單位、缺值策略）
 // 影響文件：supabase/functions/_shared/wx/types.ts
+// v1.0.0-beta: 新增 met_norway、pirate_weather、nova_ensemble
 
 export type WxProvider =
   | "auto"
   | "open_meteo"
+  | "met_norway"      // Yr.no — ECMWF 模型，歐洲最佳，全球可用，Attribution needed
+  | "pirate_weather"  // Pirate Weather — Dark Sky 算法，北美降雨最準
+  | "nova_ensemble"   // 內部聚合（多供應商加權平均，僅寫入熱點）
   | "weatherapi"
   | "tomorrow_io"
   | "openweather";
@@ -193,6 +197,15 @@ export type WxEnvironmentHourlyPoint = WxHourlyPoint & {
 
 export type WxEnvironmentDailyPoint = WxDailyPoint & {
   risk: WxTimelinePointRisk;
+};
+
+// Open-Meteo minutely_15 nowcasting payload（15 分鐘粒度，不寫入長期 DB）
+export type WxNowcastPoint = {
+  valid_time: string;        // ISO 8601 UTC
+  precip_mm_h: number | null; // 降雨強度（mm/h，由 15min 數值 × 4 換算）
+  precip_prob: number | null;  // 0–1
+  wind_ms: number | null;
+  gust_ms: number | null;
 };
 
 export type WxEnvironmentTimelineResponse = {

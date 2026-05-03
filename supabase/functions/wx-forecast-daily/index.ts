@@ -2,7 +2,7 @@
 // 影響文件：supabase/functions/wx-forecast-daily/index.ts
 
 import { jsonError, jsonResponse } from "../_shared/wx/http.ts";
-import { fetchForecastWithProvider, defaultProviderPriority } from "../_shared/wx/provider_chain.ts";
+import { fetchForecastWithProvider, defaultProviderPriority, geoRoutedPriority } from "../_shared/wx/provider_chain.ts";
 import { buildCacheKey, recordIngestRun, tryReadCache, upsertDailySeries, writeCache } from "../_shared/wx/storage.ts";
 import type { WxDailyForecastResponse, WxProvider } from "../_shared/wx/types.ts";
 import { clampInt } from "../_shared/wx/validate.ts";
@@ -81,8 +81,8 @@ Deno.serve(async (req) => {
     }
 
     const chain = provider === "auto"
-      ? defaultProviderPriority()
-      : [provider as Exclude<WxProvider, "auto">];
+      ? geoRoutedPriority(loc.country_code)
+      : [provider as Exclude<WxProvider, "auto" | "nova_ensemble">];
 
     let lastError: Error | null = null;
     for (const p of chain) {
@@ -121,6 +121,7 @@ Deno.serve(async (req) => {
           provider: p,
           points: response.daily,
           // WeatherAPI returns local date strings; all other providers emit UTC dates.
+          // met_norway and pirate_weather both use UTC timestamps → date_tz = "UTC".
           date_tz: p === "weatherapi" ? (r.timezone ?? "UTC") : "UTC",
         });
 
