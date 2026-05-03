@@ -1,3 +1,63 @@
+## v1.0.0 (2026-05-03)
+### Phase E — Production Hardening: API Standards + Multi-Provider + Nowcasting + Async Webhook
+
+**Phase 1 — API Standardisation**
+- **快取鍵正規化**（`_shared/wx/storage.ts`）：`normalizeHours()` 將 `hours` 參數量化至 [24, 48, 72, 120, 168] 分層，消除因 hours=48 vs hours=50 產生不同快取鍵的碎片問題；同時移除 `provider` 欄位（改存 payload.meta），使 provider=auto 與 provider=open_meteo 可共用同一份快取。
+- **可選 API Key 認證**（`wx-api-proxy`）：讀取 `WX_PUBLIC_API_KEY` Supabase Secret；若有設定，所有請求必須附帶 `X-WxApi-Key` header，否則回傳 401；未設定時向後相容。CORS allow-headers 新增 `x-wxapi-key`。
+- `wx-webhook-fanout`、`wx-webhook-worker` 加入 `wx-api-proxy` 白名單；不再白名單 `wx-webhook-dispatch`（已廢棄）。
+
+**Phase 2 — DB Performance**
+- **`wx_ingest_runs` 月分區**（`20260503050000_partition_ingest_runs.sql`）：以 `finished_at` RANGE 分區（2026-04 至 2026-08 + DEFAULT）；移除 UUID PK，改以 `UNIQUE INDEX` 保持 id 唯一性；舊表保留為 `wx_ingest_runs_legacy`；新增 `novaweather_prune_ingest_runs` cron（23 3 * * *）。
+- **`wx_hourly_series` 月分區**（`20260503060000_partition_hourly_series.sql`）：以 `valid_time` RANGE 分區（2026-04 至 2026-09 + DEFAULT）；現有 PK `(geohash, valid_time, kind, provider)` 天然相容，無需修改；舊表保留為 `wx_hourly_series_legacy`；RLS policies 套用至分區父表。
+
+**Phase 3 — Multi-Provider Geo-Routing**
+- **Met Norway (Yr.no) adapter**（`providers/met_norway.ts`）：ECMWF 模型；免費，無需 API Key；UTC ISO 8601 時間戳；6h 時段聚合日資料；`confidence: 0.85`；必填 `User-Agent` header。
+- **Pirate Weather adapter**（`providers/pirate_weather.ts`）：Dark Sky-compatible API；需 `PIRATE_WEATHER_API_KEY`；SI 單位（temperature_2m、precipitation intensity、visibility km→m 等換算）；`confidence: 0.8`。
+- **地理路由**（`provider_chain.ts`）：`geoRoutedPriority(country_code)` — EU 43 國優先 `met_norway`；US/CA 有 PIRATE_WEATHER_API_KEY 時優先 `pirate_weather`；其餘走 `defaultProviderPriority()`。
+- `WxProvider` 新增 `met_norway`、`pirate_weather`、`nova_ensemble`（ensemble 目前保留，不可直接 fetch）。
+- `wx-forecast-hourly`、`wx-forecast-daily` 在 `provider=auto` 路徑改用 `geoRoutedPriority(loc.country_code)`。
+- 新增 Supabase Secrets：`PIRATE_WEATHER_API_KEY`、`WX_PUBLIC_API_KEY`。
+
+**Phase 4 — Webhook Async Decoupling**
+- **`wx_webhook_queue` 表**（`20260503040000_webhook_queue_and_fanout.sql`）：`dedup_key TEXT UNIQUE` 防止重複入列；`pending/sending/done/failed` 狀態；`scheduled_at` 支援指數退避重試。
+- **`wx_claim_webhook_queue()` RPC**：`FOR UPDATE SKIP LOCKED` 原子性認領，防止多 worker 重複處理；`SECURITY DEFINER`；GRANT 給 `service_role`。
+- **`wx-webhook-fanout`**（新 Edge Function）：每 5 分鐘掃描 `wx_active_alerts`，對每個匹配訂閱寫入 `wx_webhook_queue`（`Prefer: resolution=ignore-duplicates`，ON CONFLICT DO NOTHING）；不發送 HTTP。
+- **`wx-webhook-worker`**（新 Edge Function）：每 1 分鐘呼叫 `wx_claim_webhook_queue(50)` 認領一批；批量讀取訂閱避免 N+1；並行 POST（8s timeout）；指數退避（retryAt = now + attempts × 60s）；連續失敗 ≥ 10 次自動停用訂閱；記錄到 `wx_webhook_deliveries`。
+- cron 移除 `novaweather_webhook_dispatch`；新增 `novaweather_webhook_fanout`（*/5）、`novaweather_webhook_worker`（* * * * *）、`novaweather_prune_webhook_queue`（37 3 * * *）。
+
+**Phase 5 — Nowcasting**
+- **Open-Meteo `minutely_15` nowcast**（`providers/open_meteo.ts`）：新增 `fetchOpenMeteoNowcast(lat, lon, minuteWindow)`；最多 12 步（3 小時）；`precipitation` mm/15min × 4 → mm/h；`precipitation_probability` 0–100 → 0–1；所有時間戳加 `Z` 強制 UTC。
+- **`WxNowcastPoint` 型別**（`types.ts`）：`valid_time`, `precip_mm_h`, `precip_prob`, `wind_ms`, `gust_ms`；5 分鐘快取 TTL。
+- **`wx-environment-timeline` 升級**：nowcast 與 DB 查詢並行（`Promise.all`）；有 ≥2 個 nowcast 點時用真實 15 分鐘降水/風速資料（點間線性插值到 1 分鐘解析度）；溫度/濕度仍用 observed→hourly[0] 線性插值；fetch 失敗靜默降級至原有線性估算。
+
+**Schema（新增）**
+- `wx_webhook_queue`：Webhook 異步派送佇列（第 18 張表）
+- `wx_ingest_runs`：轉換為分區父表（RANGE by finished_at，月分區）
+- `wx_hourly_series`：轉換為分區父表（RANGE by valid_time，月分區）
+
+**pg_cron（總計 20 個 jobs）**
+- 移除：`novaweather_webhook_dispatch`
+- 新增：`novaweather_webhook_fanout`（*/5）、`novaweather_webhook_worker`（* * * * *）、`novaweather_prune_webhook_queue`（37 3 *）、`novaweather_prune_ingest_runs`（23 3 *）
+
+**文件清理**
+- 移除 `docs/api/wx.md`（v0.4.2 舊版 API 契約，已被 `novaweather_api_doc.md` 完全取代）
+- 移除 `cursor.md`（v0.4.2 舊版 IDE 備忘，內容已過時）
+
+---
+
+## v0.9.1 (2026-05-03)
+### 修正與補強
+
+**Bug Fixes**
+- 修正 `wx-forecast-hourly` / `wx-forecast-daily` / `wx-observed-now` / `wx-environment-timeline`：Open-Meteo `valid_time` 現在明確加上 `Z` 尾綴（`time + "Z"`），確保所有儲存至 `wx_hourly_series` 的時間戳為 UTC ISO 8601（避免本地時區影響）。
+- 修正 `wx-alerts-ingest-cap`：HKO Feed URL 修正，確保警報正確 upsert 並包含 `ingested_at` 欄位。
+
+**Improvements**
+- `wx-status`：新增 `ingest_runs.recent_errors`（最近 15 分鐘 error 記錄數）與 `hourly_series.coverage_hours`（最新一筆預報距今小時數）到健康回應中。
+- `wx-api-proxy`：DELETE 方法限制為僅白名單允許刪除的端點（`wx-webhook-register`），其他端點 DELETE 回傳 405。
+
+---
+
 ## v0.9.0 (2026-05-03)
 ### Phase D — Differentiation: Webhook Push System
 
@@ -132,7 +192,7 @@
 - 新增排程函式 `POST /wx-sync-region-codes`（`supabase/functions/wx-sync-region-codes/index.ts`），同步 `wx_locations -> wx_region_codes` 並補 seed 區域。
 - 重構 `wx-country-today`：移除外部 reverse geocoding 依賴，改為使用 shared seed 機制，降低冷啟與外部依賴風險。
 - `wx-api-proxy` 與 `index.html` 新增 `wx-sync-region-codes` 測試入口。
-- 更新 `docs/cron.md`、`docs/api/novaweather_api_doc.md`、`README.md`、`cursor.md`、`.coding_progress`。
+- 更新 `docs/cron.md`、`docs/api/novaweather_api_doc.md`、`README.md`、`.coding_progress`。
 
 ## v0.4.0 (2026-05-01)
 - 新增 migration：`20260501050000_add_region_mapping_and_cache.sql`，建立 `wx_region_codes`（region_code 映射）與 `wx_region_cache`（區域查詢快取）。
@@ -149,7 +209,7 @@
 ## v0.3.1 (2026-05-01)
 - 修正 `index.html` GET 請求不再附帶 `content-type: application/json`，避免 CORS preflight 導致瀏覽器 `TypeError: Failed to fetch`。
 - 新增「查看 API DOC」按鈕，可直接開啟 `docs/api/novaweather_api_doc.md`。
-- 同步更新版本狀態（`README.md`、`cursor.md`、`.coding_progress`）。
+- 同步更新版本狀態（`README.md`、`.coding_progress`）。
 
 ## v0.3.0 (2026-05-01)
 - 新增 `supabase/functions/wx-environment-timeline/index.ts`：提供 `GET /wx-environment-timeline`，輸出 minute/hourly/daily 與未來數天風險。
@@ -162,10 +222,10 @@
 - 新增 `index.html` 詳細 API 實測頁，支援 `/wx/*` 與維運 POST 端點的一鍵測試。
 - 新增「按 API 自動刷新」邏輯：優先採用 `cache-control` 與 payload 的 refresh 提示，無資料時回退端點預設頻率。
 - 新增即時觀測欄位：HTTP 狀態、延遲、回應大小、最後更新、下次刷新、最後一次 JSON 回應檢視。
-- 更新 `README.md`、`cursor.md`、`.coding_progress` 以同步版本狀態與新頁面入口。
+- 更新 `README.md`、`.coding_progress` 以同步版本狀態與新頁面入口。
 
 ## v0.1.0 (2026-04-30)
-- 初始化 Supabase 全球天氣後端專案骨架與文件（README/cursor.md/.coding_progress/devlog/error.log）。
+- 初始化 Supabase 全球天氣後端專案骨架與文件（README/.coding_progress/devlog/error.log）。
 
 ## v0.2.0 (2026-04-30)
 - 新增 `/wx/*` API 契約文件（SI 單位、缺值策略）與 Edge Functions 共用型別。
@@ -204,4 +264,3 @@
 - 部署缺失/更新的 Edge Functions：`wx-geo-forward`、`wx-geo-reverse`、`wx-alerts-ingest-hko`、`wx-prune-time-series`、`wx-refresh-hotspots-hourly`、`wx-observed-now` 等。
 - 修正資料一致性：`wx-observed-now` 只讀 `kind=observed`；Open‑Meteo 風速指定為 `m/s`；hourly refresh 改成可分批執行。
 - 已 seed 全球 300 個主要城市熱點，並觸發首批 ingestion，雲端已產生 forecast/observed/alerts/health 資料。
-

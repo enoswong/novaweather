@@ -1,10 +1,10 @@
-v0.9.0
-Global Weather Backend — Phase D Differentiation (complete)
+v1.0.0
+Global Weather Backend — Phase E: Production Hardening + Multi-Provider + Nowcasting (complete)
 
 - contract: 100%
 - schema: 100%
 - edge-functions: 100%
-- cron-coverage: 100% (17 jobs)
+- cron-coverage: 100% (20 jobs)
 - risk-alerts: 100%
 - security-rls: 100%
 - api-test-page: 100%
@@ -32,5 +32,17 @@ Global Weather Backend — Phase D Differentiation (complete)
 - anomaly-detection-api: 100%
 - webhook-push-api: 100%
 - api-test-page-v2: 100%
+- cache-key-normalization: 100%
+- optional-api-key-auth: 100%
+- geo-routed-providers: 100%
+- met-norway-adapter: 100%
+- pirate-weather-adapter: 100%
+- nowcasting-minutely15: 100%
+- webhook-async-decoupling: 100%
+- webhook-queue-table: 100%
+- webhook-fanout-function: 100%
+- webhook-worker-function: 100%
+- ingest-runs-partitioning: 100%
+- hourly-series-partitioning: 100%
 
 overall: 100%

@@ -1,4 +1,4 @@
-## 版本狀態 v0.9.0
+## 版本狀態 v1.0.0
 ✅ 已完成 | ▢ 進行中 | ✖️ 已移除
 - [✅] 全球天氣後端（Supabase）[進度 100%] (v0.2.5)
 - [✅] 詳細 API 實測頁（自動刷新）[進度 100%] (v0.2.6)
@@ -21,19 +21,27 @@
 - [✅] 複合指數 API（舒適度/健康/戶外/能源）[進度 100%] (v0.8.0)
 - [✅] 多地比較 API（最多 5 點並行，含 delta 分析）[進度 100%] (v0.8.0)
 - [✅] 氣候異常偵測 API（30 年歷史常態 + Z-score）[進度 100%] (v0.8.0)
-- [✅] Webhook 推送 API（訂閱警報事件，HMAC-SHA256 簽名，5 分鐘派送，自動停用）[進度 100%] (v0.9.0)
-- [✅] API 實測頁全面更新（35 端點、分組、lat/lon + 專用欄位）[進度 100%] (v0.9.0)
+- [✅] Webhook 推送 API（訂閱警報事件，HMAC-SHA256 簽名，自動停用）[進度 100%] (v0.9.0)
+- [✅] API 實測頁全面更新（36 端點、分組、lat/lon + 專用欄位）[進度 100%] (v0.9.0)
+- [✅] 快取鍵正規化（hours 量化分層 + 移除 provider 片段）[進度 100%] (v1.0.0)
+- [✅] 可選 API Key 認證（X-WxApi-Key，WX_PUBLIC_API_KEY Secret）[進度 100%] (v1.0.0)
+- [✅] 地理路由多供應商（Met Norway EU、Pirate Weather NA）[進度 100%] (v1.0.0)
+- [✅] Nowcasting（Open-Meteo minutely_15，15 分鐘粒度降水/風速）[進度 100%] (v1.0.0)
+- [✅] Webhook 非同步解耦（queue + fanout + worker 模式）[進度 100%] (v1.0.0)
+- [✅] 資料表月分區（wx_ingest_runs + wx_hourly_series，RANGE by timestamp）[進度 100%] (v1.0.0)
 
 ## 專案概述
 本專案建立一個可擴展的 **Supabase 全球天氣後端**，提供統一的 `/wx/*` API：快取 + 歷史時間序列 + 多供應商備援 +（可選）地區官方警報插件 + 風險/環境變化輸出。
 
 ## 目前功能狀態
 - **API Contract（/wx/*）**：✅
-- **資料庫 Schema（wx_*）**：✅
-- **Edge Functions（providers + aggregation）**：✅
-- **Cron（熱點預取 + 清理）**：✅
+- **資料庫 Schema（wx_*）**：✅（18 張表，含月分區）
+- **Edge Functions（providers + aggregation）**：✅（37 個端點）
+- **Cron（熱點預取 + 清理 + webhook queue）**：✅（20 個 jobs）
 - **Risk/Alerts（rule baseline + 港澳插件）**：✅
 - **安全/RLS/Secrets**：✅
+- **多供應商地理路由（EU/NA/全球）**：✅
+- **Nowcasting（minutely_15）**：✅
 
 ## 開發與部署（Supabase）
 > 注意：請勿在任何地方（程式碼、前端、公開文件）使用 `service_role` key。第三方天氣 API keys 必須放在 Supabase Secrets/Vault。
@@ -68,11 +76,10 @@ supabase functions deploy wx-forecast-hourly
 ```
 
 ## 文件
-- `docs/api/wx.md`：/wx/* API 契約與欄位定義（SI 單位、缺值策略）
+- `docs/api/novaweather_api_doc.md`：完整 API 契約與欄位定義（SI 單位、缺值策略，v1.0.0 最新版）
 - `index.html`：詳細 API 實測頁（可測 GET/POST 端點、每個 API 各自輸出 JSON、顯示延遲/回應大小/下次刷新時間）
-- `docs/api/novaweather_api_doc.md`：新增 `GET /wx-environment-timeline`（minute/hourly/daily + extreme weather risk）
 - `supabase/migrations/`：資料表 schema 與 RLS
-- `supabase/functions/`：Edge Functions（providers + aggregation）
-- `docs/cron.md`：排程任務說明
+- `supabase/functions/`：Edge Functions（providers + aggregation + webhook）
+- `docs/cron.md`：排程任務說明（20 個 pg_cron jobs）
 - `docs/security.md`：Secrets/RLS 安全規範
-
+- `docs/architecture/supabase-structure.md`：Supabase 架構與外部資料流（v1.0.0）
