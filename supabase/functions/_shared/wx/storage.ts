@@ -105,11 +105,17 @@ export async function upsertDailySeries(
     geohash: string;
     provider: Exclude<WxProvider, "auto">;
     points: WxDailyPoint[];
+    // date_tz: IANA timezone of the date column.
+    // Open-Meteo (primary) and Tomorrow.io/OpenWeather use UTC.
+    // WeatherAPI (backup) uses the location's local timezone.
+    date_tz?: string;
   },
 ) {
+  const dateTz = args.date_tz ?? "UTC";
   const rows = args.points.map((p) => ({
     geohash: args.geohash,
     date: p.date,
+    date_tz: dateTz,
     t_min_c: p.t_min_c,
     t_max_c: p.t_max_c,
     precip_sum_mm: p.precip_sum_mm,

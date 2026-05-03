@@ -1,10 +1,12 @@
 // 修改說明：WeatherAPI.com provider adapter（備援 1）
 // 影響文件：supabase/functions/_shared/wx/providers/weatherapi.ts
+// UTC 策略：使用 time_epoch（Unix 秒）轉 UTC；WeatherAPI 每小時必定回傳此欄位
 
 import type { WxDailyPoint, WxHourlyPoint } from "../types.ts";
 
 type WeatherApiForecastHour = {
-  time: string;
+  time: string;       // local time "2026-05-03 09:00" — do NOT use for UTC conversion
+  time_epoch?: number; // Unix seconds UTC — preferred for valid_time
   temp_c?: number;
   feelslike_c?: number;
   humidity?: number;
@@ -95,7 +97,13 @@ export async function fetchWeatherApiForecast(params: {
 
     for (const h of day.hour ?? []) {
       hourly.push({
-        valid_time: new Date(h.time).toISOString(),
+        // WeatherAPI returns local time strings ("2026-05-03 09:00", no UTC offset).
+        // new Date("2026-05-03 09:00") is non-standard and parses as local time,
+        // which is UTC on Deno servers but wrong for non-UTC locations.
+        // Use time_epoch (Unix seconds) instead — always UTC-correct.
+        valid_time: h.time_epoch != null
+          ? new Date(h.time_epoch * 1000).toISOString()
+          : new Date(h.time.replace(" ", "T") + "Z").toISOString(), // last-resort fallback
         temp_c: h.temp_c ?? null,
         feels_like_c: h.feelslike_c ?? null,
         humidity_pct: h.humidity ?? null,

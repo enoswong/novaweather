@@ -1,5 +1,6 @@
 // 修改說明：Open‑Meteo provider adapter（主力，無需 API key）
 // 影響文件：supabase/functions/_shared/wx/providers/open_meteo.ts
+// UTC 策略：強制 timezone=UTC，所有時間以 UTC 為基準存入 DB
 
 import type { WxDailyPoint, WxHourlyPoint } from "../types.ts";
 
@@ -83,7 +84,11 @@ export async function fetchOpenMeteoForecast(params: {
   url.searchParams.set("daily", DAILY_FIELDS);
   url.searchParams.set("forecast_hours", String(hours));
   url.searchParams.set("forecast_days", String(days));
-  url.searchParams.set("timezone", "auto");
+  // 強制 UTC：Open-Meteo 以 timezone=auto 回傳本地時間字串（無 offset），
+  // 在 Deno UTC 伺服器上 new Date("2026-05-03T09:00") 被誤認為 UTC 09:00，
+  // 但對 UTC+9 的東京而言實際是 UTC 00:00 → 9 小時偏差。
+  // 改為 timezone=UTC 後，回傳值即代表 UTC 時間，附加 "Z" 確保明確解析。
+  url.searchParams.set("timezone", "UTC");
   url.searchParams.set("temperature_unit", "celsius");
   url.searchParams.set("wind_speed_unit", "ms");
   url.searchParams.set("precipitation_unit", "mm");
@@ -102,7 +107,9 @@ export async function fetchOpenMeteoForecast(params: {
   if (h?.time?.length) {
     for (let i = 0; i < h.time.length; i++) {
       hourly.push({
-        valid_time: new Date(h.time[i]).toISOString(),
+        // Open-Meteo with timezone=UTC returns "2026-05-03T09:00" (no seconds, no Z).
+        // Appending "Z" forces explicit UTC interpretation regardless of server locale.
+        valid_time: new Date(h.time[i] + "Z").toISOString(),
 
         temp_c: h.temperature_2m?.[i] ?? null,
         feels_like_c: h.apparent_temperature?.[i] ?? null,
@@ -136,6 +143,7 @@ export async function fetchOpenMeteoForecast(params: {
   if (d?.time?.length) {
     for (let i = 0; i < d.time.length; i++) {
       daily.push({
+        // timezone=UTC → d.time[i] is already a UTC date string ("YYYY-MM-DD")
         date: d.time[i],
         t_min_c: d.temperature_2m_min?.[i] ?? null,
         t_max_c: d.temperature_2m_max?.[i] ?? null,

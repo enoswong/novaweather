@@ -120,6 +120,8 @@ Deno.serve(async (req) => {
           geohash,
           provider: p,
           points: response.daily,
+          // WeatherAPI returns local date strings; all other providers emit UTC dates.
+          date_tz: p === "weatherapi" ? (r.timezone ?? "UTC") : "UTC",
         });
 
         await writeCache(supabase, {

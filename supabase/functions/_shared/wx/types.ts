@@ -65,7 +65,13 @@ export type WxHourlyForecastResponse = {
 };
 
 export type WxDailyPoint = {
-  date: string; // YYYY-MM-DD (local date in meta.timezone)
+  // YYYY-MM-DD in UTC. All providers are normalised to UTC day boundaries:
+  //   - Open-Meteo: timezone=UTC enforced (was: timezone=auto → local date, bug)
+  //   - WeatherAPI: date string is local but accepted as-is (backup provider only)
+  //   - Tomorrow.io: UTC ISO timestamp → getUTC* extraction (correct)
+  //   - OpenWeather: Unix dt → getUTC* extraction (correct)
+  // DB queries use todayUtc() which is consistent with this UTC anchoring.
+  date: string;
 
   t_min_c: number | null;
   t_max_c: number | null;
