@@ -844,7 +844,7 @@ function updateLiveWeather() {
   // Try observed_now first, fallback to forecast_hourly
   const obs = state.get("observed_now")?.payload;
   const hrly = state.get("forecast_hourly")?.payload;
-  const src = obs?.current ?? obs?.hourly?.[0] ?? hrly?.hourly?.[0];
+  const src = obs?.observed ?? obs?.current ?? obs?.hourly?.[0] ?? hrly?.hourly?.[0];
   if (!src) return;
 
   const temp = src.temp_c ?? "--";

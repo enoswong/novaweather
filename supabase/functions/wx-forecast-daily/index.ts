@@ -116,47 +116,55 @@ Deno.serve(async (req) => {
           daily: r.daily.slice(0, days),
         };
 
-        await upsertDailySeries(supabase, {
-          geohash,
-          provider: p,
-          points: response.daily,
-          // WeatherAPI returns local date strings; all other providers emit UTC dates.
-          // met_norway and pirate_weather both use UTC timestamps → date_tz = "UTC".
-          date_tz: p === "weatherapi" ? (r.timezone ?? "UTC") : "UTC",
-        });
+        try {
+          await upsertDailySeries(supabase, {
+            geohash,
+            provider: p,
+            points: response.daily,
+            // WeatherAPI returns local date strings; all other providers emit UTC dates.
+            // met_norway and pirate_weather both use UTC timestamps → date_tz = "UTC".
+            date_tz: p === "weatherapi" ? (r.timezone ?? "UTC") : "UTC",
+          });
+        } catch (e) { console.error("[wx-forecast-daily] upsertDailySeries:", e); }
 
-        await writeCache(supabase, {
-          cache_key: cacheKey,
-          geohash,
-          endpoint,
-          params: { days, provider },
-          payload: response,
-          ttlSeconds: 6 * 60 * 60,
-          fetched_at: r.fetched_at,
-        });
+        try {
+          await writeCache(supabase, {
+            cache_key: cacheKey,
+            geohash,
+            endpoint,
+            params: { days, provider },
+            payload: response,
+            ttlSeconds: 6 * 60 * 60,
+            fetched_at: r.fetched_at,
+          });
+        } catch (e) { console.error("[wx-forecast-daily] writeCache:", e); }
 
-        await recordIngestRun(supabase, {
-          provider: p,
-          geohash,
-          endpoint,
-          status: "ok",
-          latency_ms: r.source_latency_ms,
-          http_status: null,
-          error: null,
-        });
+        try {
+          await recordIngestRun(supabase, {
+            provider: p,
+            geohash,
+            endpoint,
+            status: "ok",
+            latency_ms: r.source_latency_ms,
+            http_status: null,
+            error: null,
+          });
+        } catch (e) { console.error("[wx-forecast-daily] recordIngestRun ok:", e); }
 
         return jsonResponse(response);
       } catch (e) {
         lastError = e instanceof Error ? e : new Error(String(e));
-        await recordIngestRun(supabase, {
-          provider: p,
-          geohash,
-          endpoint,
-          status: "error",
-          latency_ms: null,
-          http_status: null,
-          error: lastError.message,
-        });
+        try {
+          await recordIngestRun(supabase, {
+            provider: p,
+            geohash,
+            endpoint,
+            status: "error",
+            latency_ms: null,
+            http_status: null,
+            error: lastError.message,
+          });
+        } catch (ie) { console.error("[wx-forecast-daily] recordIngestRun error:", ie); }
       }
     }
 

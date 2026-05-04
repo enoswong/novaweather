@@ -117,45 +117,53 @@ Deno.serve(async (req) => {
           hourly: r.hourly,
         };
 
-        await upsertHourlySeries(supabase, {
-          geohash,
-          kind: "forecast",
-          provider: p,
-          points: r.hourly,
-        });
+        try {
+          await upsertHourlySeries(supabase, {
+            geohash,
+            kind: "forecast",
+            provider: p,
+            points: r.hourly,
+          });
+        } catch (e) { console.error("[wx-forecast-hourly] upsertHourlySeries:", e); }
 
-        await writeCache(supabase, {
-          cache_key: cacheKey,
-          geohash,
-          endpoint,
-          params: { hours, provider },
-          payload: response,
-          ttlSeconds: 15 * 60,
-          fetched_at: r.fetched_at,
-        });
+        try {
+          await writeCache(supabase, {
+            cache_key: cacheKey,
+            geohash,
+            endpoint,
+            params: { hours, provider },
+            payload: response,
+            ttlSeconds: 15 * 60,
+            fetched_at: r.fetched_at,
+          });
+        } catch (e) { console.error("[wx-forecast-hourly] writeCache:", e); }
 
-        await recordIngestRun(supabase, {
-          provider: p,
-          geohash,
-          endpoint,
-          status: "ok",
-          latency_ms: r.source_latency_ms,
-          http_status: null,
-          error: null,
-        });
+        try {
+          await recordIngestRun(supabase, {
+            provider: p,
+            geohash,
+            endpoint,
+            status: "ok",
+            latency_ms: r.source_latency_ms,
+            http_status: null,
+            error: null,
+          });
+        } catch (e) { console.error("[wx-forecast-hourly] recordIngestRun ok:", e); }
 
         return jsonResponse(response);
       } catch (e) {
         lastError = e instanceof Error ? e : new Error(String(e));
-        await recordIngestRun(supabase, {
-          provider: p,
-          geohash,
-          endpoint,
-          status: "error",
-          latency_ms: null,
-          http_status: null,
-          error: lastError.message,
-        });
+        try {
+          await recordIngestRun(supabase, {
+            provider: p,
+            geohash,
+            endpoint,
+            status: "error",
+            latency_ms: null,
+            http_status: null,
+            error: lastError.message,
+          });
+        } catch (ie) { console.error("[wx-forecast-hourly] recordIngestRun error:", ie); }
       }
     }
 
