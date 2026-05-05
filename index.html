@@ -1064,7 +1064,7 @@ el("runAll").addEventListener("click", runAllOnce);
 el("startAuto").addEventListener("click", startAuto);
 el("stopAuto").addEventListener("click", stopAuto);
 el("openApiDoc").addEventListener("click", () =>
-  window.open("https://github.com/enoswong/novaweather/blob/main/docs/api/novaweather_api_doc.md", "_blank", "noopener,noreferrer")
+  window.open(new URL("./docs/api/", location.href).href, "_blank", "noopener,noreferrer")
 );
 
 // ═══════════════════════════════════════════════════════════════════
