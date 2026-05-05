@@ -1,4 +1,4 @@
-# NovaWeather API 文件 v0.9.1
+# NovaWeather API 文件 v1.0.0
 
 ## 版本狀態
 ✅ 已完成 | ▢ 進行中 | ✖️ 已移除
@@ -15,6 +15,7 @@
 - [✅] Webhook 推送 API（訂閱警報/風險事件，HMAC 簽名，每 5 分鐘派送）[進度 100%] (v0.9.0)
 - [✅] API 實測頁全面更新（35 端點、9 群組、lat/lon + 專用欄位）[進度 100%] (v0.9.0)
 - [✅] **v0.9.1**：UTC 時區標準化（Open-Meteo timezone=UTC）+ wx-status 系統健康 API + 呼叫慣例文件修正
+- [✅] **v1.0.0**：Multi-Provider 地理路由（Met Norway EU / Pirate Weather 北美）+ 快取鍵正規化 + Webhook 異步解耦（fanout + worker）+ DB 月分區 + Nowcasting minutely_15 + 預報函式非致命 DB 寫入
 
 ---
 
@@ -98,7 +99,7 @@ curl -X POST "$BASE/wx-refresh-hotspots-hourly" \
 | `lat` | 緯度（-90 ~ 90） | — |
 | `lon` | 經度（-180 ~ 180） | — |
 | `place_id` | 精準位置識別（由 `wx-geo-forward` 取得） | — |
-| `provider` | `auto \| open_meteo \| weatherapi \| tomorrow_io \| openweather` | `auto` |
+| `provider` | `auto \| open_meteo \| met_norway \| pirate_weather \| weatherapi \| tomorrow_io \| openweather` | `auto` |
 | `allow_live_fetch` | `true \| false`；false 時僅回傳 cron 已寫入的快取資料 | `true` |
 
 `lat/lon` 與 `place_id` 二擇一（forecast / observed / alerts / risk 類端點）。
@@ -260,6 +261,8 @@ curl "$BASE/wx-geo-reverse?lat=22.3193&lon=114.1694"
 
 ## API 2：Forecast — 預報
 
+> **v1.0.0 可靠性**：預報函式採「非致命 DB 寫入」設計——即使時間序列入庫、快取寫入或 ingest_run 記錄失敗，API 仍會正常回傳天氣資料（錯誤僅記錄至日誌）。
+
 ### `GET /wx/forecast/hourly` — 逐小時預報
 
 取得未來最多 168 小時（7 天）的小時級預報。
@@ -271,7 +274,9 @@ curl "$BASE/wx-geo-reverse?lat=22.3193&lon=114.1694"
 | `lat` / `lon` | ✅（與 place_id 二擇一） | 座標 | — |
 | `place_id` | ✅（與 lat/lon 二擇一） | 位置 ID | — |
 | `hours` | — | 1–168 | 72 |
-| `provider` | — | `auto \| open_meteo \| ...` | `auto` |
+| `provider` | — | `auto \| open_meteo \| met_norway \| pirate_weather \| weatherapi \| tomorrow_io \| openweather` | `auto` |
+
+> **`provider=auto` 地理路由（v1.0.0）**：EU 43 個國家優先使用 `met_norway`（ECMWF 模型）；美國/加拿大（且設有 `PIRATE_WEATHER_API_KEY`）優先使用 `pirate_weather`（Dark Sky 算法）；其餘地區使用 `open_meteo` → `weatherapi` → `tomorrow_io` 順序備援。
 
 **範例**
 
@@ -353,7 +358,7 @@ curl "$BASE/wx-forecast-hourly?lat=22.3193&lon=114.1694&hours=24"
 
 取得未來最多 16 天的日級預報。
 
-> **時區說明（v0.9.1）**：回應中 `daily[].date` 為 **UTC 日期**（`YYYY-MM-DD`），以 UTC 午夜為日界線。`meta.timezone` 代表地點所屬時區，僅作參考用——客戶端如需顯示「本地今日」需自行換算。
+> **時區說明**：回應中 `daily[].date` 為 **UTC 日期**（`YYYY-MM-DD`），以 UTC 午夜為日界線。`meta.timezone` 代表地點所屬時區，僅作參考用——客戶端如需顯示「本地今日」需自行換算。
 
 **Query 參數**
 
@@ -362,7 +367,7 @@ curl "$BASE/wx-forecast-hourly?lat=22.3193&lon=114.1694&hours=24"
 | `lat` / `lon` | ✅ | 座標 | — |
 | `place_id` | ✅ | 位置 ID | — |
 | `days` | — | 1–16 | 14 |
-| `provider` | — | `auto \| open_meteo \| ...` | `auto` |
+| `provider` | — | `auto \| open_meteo \| met_norway \| pirate_weather \| weatherapi \| tomorrow_io \| openweather` | `auto` |
 
 **範例**
 
@@ -617,8 +622,10 @@ curl "$BASE/wx-risk?lat=22.3193&lon=114.1694&window_hours=24"
 | `minute_window` | — | 5–180 | 60 |
 | `days` | — | 1–16 | 7 |
 | `radius_km` | — | 1–500 | 50 |
-| `provider` | — | 供應商 | `auto` |
+| `provider` | — | `auto \| open_meteo \| met_norway \| pirate_weather \| weatherapi \| tomorrow_io \| openweather` | `auto` |
 | `allow_live_fetch` | — | 是否允許即時抓取 | `true` |
+
+> **分鐘級資料來源（v1.0.0）**：`minute[]` 使用 Open-Meteo `minutely_15` Nowcasting 端點，15 分鐘粒度，降雨強度為 mm/h（由原始 15min 值 ×4 換算）。
 
 **範例**
 
@@ -807,7 +814,7 @@ curl "$BASE/wx-country-today?country_code=HK&include=summary,risk,alerts"
 | `days` | — | 1–16 | 7 |
 | `window_hours` | — | 1–168 | 24 |
 | `radius_km` | — | 1–500 | 50 |
-| `provider` | — | 供應商 | `auto` |
+| `provider` | — | `auto \| open_meteo \| met_norway \| pirate_weather \| weatherapi \| tomorrow_io \| openweather` | `auto` |
 | `allow_live_fetch` | — | 是否即時抓取 | `true` |
 
 **範例**
@@ -1969,7 +1976,7 @@ cache-control: public, max-age=3600
 
 ## API 19：Webhook — 事件推送訂閱
 
-NovaWeather 支援 Webhook 讓你的後端在氣象事件發生時收到 HTTP POST 推送。每 5 分鐘由 `pg_cron` 觸發派送。
+NovaWeather 支援 Webhook 讓你的後端在氣象事件發生時收到 HTTP POST 推送。v1.0.0 採用**雙層異步架構**：fanout 工作每 5 分鐘掃描事件並寫入佇列，worker 工作每 1 分鐘批次派送（支援指數退避重試）。詳見下方「Webhook 派送架構」。
 
 **目前支援事件類型**
 
@@ -2149,34 +2156,26 @@ function verify(secret, body, sigHeader) {
 
 ---
 
-### `GET /wx-webhook-dispatch?since_minutes=6` — 手動觸發派送
+### Webhook 派送架構（v1.0.0 異步解耦）
 
-手動執行一次派送循環（供測試或補送），正常情況由 `pg_cron` 每 5 分鐘自動執行。
+v1.0.0 將 Webhook 派送從同步改為**雙層異步**架構，提升可靠性並支援指數退避重試：
 
-| 參數 | 說明 | 預設 |
-|---|---|---|
-| `since_minutes` | 往回查幾分鐘內的新事件 | 6 |
+| 元件 | Edge Function | 觸發方式 | 說明 |
+|---|---|---|---|
+| **Fanout** | `wx-webhook-fanout` | `pg_cron` 每 5 分鐘 | 掃描新事件 → 寫入 `wx_webhook_queue` |
+| **Worker** | `wx-webhook-worker` | `pg_cron` 每 1 分鐘 | 認領 queue 任務 → HTTP POST → 更新派送狀態 |
 
-**範例**
+**Fanout 邏輯**：
+- 每次掃描過去 6 分鐘的新警報 / 高風險事件
+- 比對訂閱的 `event_types` 與地理範圍（`radius_km`）
+- 寫入 `wx_webhook_queue`（每筆訂閱 × 事件各一行）
 
-```bash
-# 手動補送過去 30 分鐘的事件
-curl "$BASE/wx-webhook-dispatch?since_minutes=30"
-```
+**Worker 邏輯**：
+- `SELECT ... FOR UPDATE SKIP LOCKED` 每次最多認領 50 筆
+- HTTP POST 超時 8 秒；失敗後依指數退避排程重試（最多 10 次）
+- 連續失敗 ≥ 10 次自動停用訂閱（`active = false`）
 
-**預期回應 200**
-
-```json
-{
-  "ok": true,
-  "dispatched": 3,
-  "checked_subscriptions": 7,
-  "new_alerts_found": 2,
-  "window_minutes": 30,
-  "since": "2026-05-03T07:35:00.000Z",
-  "fired_at": "2026-05-03T08:05:00.000Z"
-}
-```
+> **注意**：`wx-webhook-dispatch`（舊版同步派送）已在 v1.0.0 移除，勿再呼叫。
 
 ---
 
@@ -2329,7 +2328,7 @@ curl -X POST "$BASE/wx-hotspots-seed-global-cities" \
 
 ---
 
-## API 21：系統健康狀態（v0.9.1 新增）
+## API 21：系統健康狀態
 
 ### `GET /wx-status` — 系統健康摘要
 
@@ -2343,12 +2342,14 @@ curl "$BASE/wx-status"
 
 ```json
 {
-  "version": "0.9.1",
+  "version": "1.0.0",
   "ts": "2026-05-03T10:00:00.000Z",
   "db": { "ok": true, "error": null },
   "providers": [
-    { "provider": "open_meteo", "failure_rate_15m": 0.0, "p95_latency_ms": 242, "circuit_open": false, "circuit_open_until": null, "updated_at": "2026-05-03T09:58:00.000Z" },
-    { "provider": "weatherapi",  "failure_rate_15m": 0.05, "p95_latency_ms": 510, "circuit_open": false, "circuit_open_until": null, "updated_at": "2026-05-03T09:58:00.000Z" }
+    { "provider": "open_meteo",    "failure_rate_15m": 0.0,  "p95_latency_ms": 242, "circuit_open": false, "circuit_open_until": null, "updated_at": "2026-05-03T09:58:00.000Z" },
+    { "provider": "met_norway",    "failure_rate_15m": 0.0,  "p95_latency_ms": 318, "circuit_open": false, "circuit_open_until": null, "updated_at": "2026-05-03T09:58:00.000Z" },
+    { "provider": "pirate_weather","failure_rate_15m": 0.02, "p95_latency_ms": 490, "circuit_open": false, "circuit_open_until": null, "updated_at": "2026-05-03T09:58:00.000Z" },
+    { "provider": "weatherapi",    "failure_rate_15m": 0.05, "p95_latency_ms": 510, "circuit_open": false, "circuit_open_until": null, "updated_at": "2026-05-03T09:58:00.000Z" }
   ],
   "cron_jobs": [
     { "jobname": "novaweather_refresh_hotspots_hourly", "schedule": "*/30 * * * *", "active": true, "next_run": "2026-05-03T10:30:00+00:00" },
@@ -2371,7 +2372,7 @@ curl "$BASE/wx-status"
 
 ## Cron 排程一覽
 
-共 **18** 個 `pg_cron` 排程任務（v0.9.1 新增 `novaweather_prune_ingest_runs`）：
+共 **20** 個 `pg_cron` 排程任務（v1.0.0 新增 Webhook fanout + worker）：
 
 | 排程名稱 | 週期 | 說明 |
 |---|---|---|
@@ -2384,9 +2385,17 @@ curl "$BASE/wx-status"
 | `novaweather_alerts_ingest_cap` | `*/10 * * * *` | CAP/Atom feeds ingest |
 | `novaweather_alerts_ingest_hko` | `*/5 * * * *` | HKO 警報 ingest |
 | `novaweather_alerts_ingest_smg` | `*/10 * * * *` | SMG 警報 ingest |
+| `novaweather_alerts_ingest_nws` | `*/10 * * * *` | 美國 NWS GeoJSON 警報 ingest |
 | `novaweather_provider_health_refresh` | `*/5 * * * *` | 供應商健康度計算 |
+| `novaweather_refresh_airquality_hotspots` | `*/30 * * * *` | 熱點空氣質素刷新 |
+| `novaweather_refresh_marine_hotspots` | `0 */6 * * *` | 熱點海洋資料刷新（自動跳過陸地）|
+| `novaweather_observed_metar` | `*/10 * * * *` | METAR 觀測刷新（35 個全球優先站）|
+| `novaweather_sync_region_codes` | `30 */2 * * *` | Region Code 同步（每 2 小時）|
+| `novaweather_webhook_fanout` | `*/5 * * * *` | **v1.0.0** Webhook 事件掃描 → 寫入 queue |
+| `novaweather_webhook_worker` | `* * * * *` | **v1.0.0** Webhook queue 認領 → HTTP POST（≤50/run）|
+| `novaweather_prune_webhook_queue` | `37 3 * * *` | **v1.0.0** 清理 7 天前 webhook_queue 記錄（03:37 UTC）|
 | `novaweather_prune_webhook_deliveries` | `15 3 * * *` | 清理 7 天前派送記錄（03:15 UTC）|
-| `novaweather_prune_ingest_runs` | `23 3 * * *` | **新增** 清理 7 天前 ingest_runs（03:23 UTC）|
+| `novaweather_prune_ingest_runs` | `23 3 * * *` | 清理 7 天前 ingest_runs（03:23 UTC）|
 
 > 查詢即時狀態：`GET /wx-status` → `cron_jobs[]`（含 `next_run`）。
 
@@ -2399,21 +2408,28 @@ curl "$BASE/wx-status"
 ```typescript
 interface WxHourlyPoint {
   valid_time: string;           // ISO 8601 UTC
+
   temp_c: number | null;
-  apparent_temp_c: number | null;
-  dewpoint_c: number | null;
+  feels_like_c: number | null;  // 體感溫度（Met Norway compact 不提供，返回 null）
   humidity_pct: number | null;  // 0–100
-  precip_mm: number | null;
-  precip_prob: number | null;   // 0–100
-  snow_depth_m: number | null;
-  wind_speed_ms: number | null;
+  dewpoint_c: number | null;
+  pressure_hpa: number | null;
+
+  wind_ms: number | null;
   wind_dir_deg: number | null;  // 0–360
-  wind_gust_ms: number | null;
+  gust_ms: number | null;
+
+  precip_mm: number | null;
+  precip_prob: number | null;   // 0–1
+  snow_mm: number | null;
+
   cloud_pct: number | null;     // 0–100
   visibility_m: number | null;
-  pressure_hpa: number | null;
   uv_index: number | null;
-  weather_code: number | null;  // WMO 4677
+
+  provider: string;             // 供應商識別碼
+  fetched_at: string;           // ISO 8601 UTC
+  confidence: number | null;    // 0–1，模型可信度
 }
 ```
 
@@ -2421,19 +2437,18 @@ interface WxHourlyPoint {
 
 ```typescript
 interface WxDailyPoint {
-  date: string;                        // YYYY-MM-DD (UTC date, v0.9.1+)
-  temp_min_c: number | null;
-  temp_max_c: number | null;
-  apparent_temp_min_c: number | null;
-  apparent_temp_max_c: number | null;
+  date: string;                        // YYYY-MM-DD（UTC 日期，所有供應商均已正規化為 UTC 午夜）
+
+  t_min_c: number | null;
+  t_max_c: number | null;
   precip_sum_mm: number | null;
-  precip_prob_max: number | null;
+  precip_prob_max: number | null;      // 0–1
   wind_max_ms: number | null;
-  wind_dir_dominant_deg: number | null;
-  uv_index_max: number | null;
-  sunrise_utc: string | null;          // HH:MM
-  sunset_utc: string | null;           // HH:MM
-  weather_code: number | null;
+  uv_max: number | null;
+
+  provider: string;                    // 供應商識別碼
+  fetched_at: string;                  // ISO 8601 UTC
+  confidence: number | null;           // 0–1，模型可信度
 }
 ```
 
@@ -2443,17 +2458,30 @@ interface WxDailyPoint {
 interface WxAlert {
   id: string;                    // UUID
   source: string;                // "HKO" | "NWS" | "SMG" | "CAP" | ...
-  event_type: string;
-  severity: string;              // "Minor" | "Moderate" | "Severe" | "Extreme"
-  urgency: string;               // "Immediate" | "Expected" | "Future"
-  headline: string;
+  severity: "info" | "yellow" | "orange" | "red" | "emergency";
+  title: string;
   description: string | null;
-  effective: string;             // ISO 8601 UTC
-  expires: string;               // ISO 8601 UTC
-  area: string | null;
-  bbox: [number, number, number, number] | null;  // [lon_min, lat_min, lon_max, lat_max]
-  centroid_lat: number | null;
-  centroid_lon: number | null;
-  distance_km: number | null;    // 與查詢座標距離（/wx/alerts 時提供）
+  starts_at: string | null;      // ISO 8601 UTC
+  ends_at: string | null;        // ISO 8601 UTC
 }
 ```
+
+### WxNowcastPoint（v1.0.0）
+
+15 分鐘粒度即時降雨 nowcasting（Open-Meteo `minutely_15`，不寫入長期 DB）：
+
+```typescript
+interface WxNowcastPoint {
+  valid_time: string;        // ISO 8601 UTC
+  precip_mm_h: number | null; // 降雨強度（mm/h，原始 15min 值 ×4 換算）
+  precip_prob: number | null;  // 0–1
+  wind_ms: number | null;
+  gust_ms: number | null;
+}
+```
+
+---
+
+## 資料庫分區（v1.0.0）
+
+`wx_ingest_runs` 與 `wx_hourly_series` 已轉換為 PostgreSQL **RANGE 月分區**（`pg_partman` 管理），自動建立未來 3 個月分區並保留 12 個月歷史。舊查詢不需修改——分區對 SQL 透明。
